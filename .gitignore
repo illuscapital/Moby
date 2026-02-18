@@ -1,0 +1,4 @@
+node_modules/
+strategy/data/
+.env
+*.log
