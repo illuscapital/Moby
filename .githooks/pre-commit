@@ -1,0 +1,6 @@
+#!/bin/bash
+# Block commits containing secrets
+if git diff --cached --diff-filter=d | grep -iE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|api.key|secret|password' | grep -v '.env.example' | grep -v 'process.env'; then
+  echo "❌ BLOCKED: Possible secret in staged files. Review and remove."
+  exit 1
+fi

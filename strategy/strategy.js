@@ -27,6 +27,10 @@ const PARAMS = {
   requireSingleLeg: true,
   minAskSidePct: 0.70,
 
+  // IV filters
+  maxEntryIv: 0.85,             // reject if IV > 85% (IV crush risk too high)
+  minEntryIv: 0.15,             // reject if IV < 15% (no real volatility priced in)
+
   // Position sizing
   maxPositionSize: 5000,        // $5K per trade
   maxOpenPositions: 10,
@@ -435,6 +439,18 @@ async function run() {
         if (!quote || quote.price <= 0) {
           console.log(`  SKIP (no price): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
           continue;
+        }
+
+        // IV filter — reject extremes
+        if (quote.iv && quote.iv > 0) {
+          if (quote.iv > PARAMS.maxEntryIv) {
+            console.log(`  SKIP (IV too high: ${(quote.iv * 100).toFixed(0)}% > ${(PARAMS.maxEntryIv * 100).toFixed(0)}%): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
+            continue;
+          }
+          if (quote.iv < PARAMS.minEntryIv) {
+            console.log(`  SKIP (IV too low: ${(quote.iv * 100).toFixed(0)}% < ${(PARAMS.minEntryIv * 100).toFixed(0)}%): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
+            continue;
+          }
         }
 
         const pricePerContract = quote.price * 100; // options are 100 shares
