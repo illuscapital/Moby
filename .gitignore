@@ -1,4 +1,11 @@
-node_modules/
-strategy/data/
+# Data & state (runtime, not code)
+data/
+*.jsonl
+
+# Environment
 .env
-*.log
+node_modules/
+
+# Temp
+/tmp/
+*.tmp
