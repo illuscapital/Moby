@@ -9,7 +9,7 @@ const { execSync } = require('child_process');
 
 const API_TOKEN = process.env.UW_API_TOKEN;
 if (!API_TOKEN) { console.error('UW_API_TOKEN not set'); process.exit(1); }
-const DATA_DIR = path.join(__dirname, '..', 'flow-strategy', 'data');
+const DATA_DIR = path.join(__dirname, '..', 'Moby', 'data');
 const SEEN_FILE = path.join(DATA_DIR, 'seen-flow-alerts.json');
 
 // Deduplication window: 7 days
