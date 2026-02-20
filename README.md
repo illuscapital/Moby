@@ -52,16 +52,28 @@ Sells iron condors on earnings stocks where Flow has no directional signal. Prof
 ## Architecture
 
 ```
-strategy/
-  collector.js          — Fetches UW flow alerts + screener data every 30min
-  strategy.js           — Flow strategy: filters, entries, exits, mark-to-market
-  theta-strategy.js     — Theta strategy: iron condor construction + management
-  report-template.html  — HTML template for Flow report images
-  render-report.js      — Generates Flow report HTML
-  render-theta-report.js — Generates Theta report HTML
-
-scripts/
-  flow-alert.js         — Standalone flow alert scanner with file-based dedup
+Moby/
+├── collector.js            — Fetches UW flow alerts + screener data every 30min
+├── strategy.js             — Flow strategy: filters, entries, exits, mark-to-market
+├── theta-strategy.js       — Theta strategy: iron condor construction + management
+├── report/
+│   ├── render-report.js    — Generates combined Flow + Theta HTML report
+│   ├── render-theta-report.js — Generates Theta-only HTML report
+│   ├── render-ascii.js     — Generates fixed-width text report (webchat)
+│   ├── report-template.html — HTML template for report images
+│   └── send-report.sh     — CLI pipeline: render → screenshot → Signal
+├── scripts/
+│   └── flow-alert.js      — Standalone flow alert scanner with file-based dedup
+├── data/                   — Runtime state (gitignored)
+│   ├── strategy-state.json — Flow positions, stats
+│   ├── theta-state.json   — Theta positions, stats
+│   ├── trades.jsonl       — Flow trade log
+│   ├── theta-trades.jsonl — Theta trade log
+│   ├── flow-YYYY-MM-DD.jsonl    — Daily flow alert archives
+│   └── screener-YYYY-MM-DD.jsonl — Daily screener archives
+├── .githooks/
+│   └── pre-commit         — Blocks commits containing secrets
+└── .env.example
 ```
 
 ## Running
@@ -69,7 +81,7 @@ scripts/
 Designed to run via OpenClaw cron jobs (every 30min during market hours):
 
 ```bash
-cd strategy && node collector.js && node strategy.js && node theta-strategy.js
+node collector.js && node strategy.js && node theta-strategy.js
 ```
 
 ## Environment Variables
@@ -78,15 +90,6 @@ cd strategy && node collector.js && node strategy.js && node theta-strategy.js
 UW_API_TOKEN=         # Unusual Whales API token (required)
 SIGNAL_TARGET_UUID=   # Signal recipient UUID for notifications (optional)
 ```
-
-## Data
-
-Runtime data stored in `strategy/data/` (gitignored):
-- `strategy-state.json` — Flow open/closed positions, stats
-- `theta-state.json` — Theta open/closed positions, stats
-- `trades.jsonl` / `theta-trades.jsonl` — trade logs
-- `flow-YYYY-MM-DD.jsonl` — daily flow alert archives
-- `screener-YYYY-MM-DD.jsonl` — daily screener archives
 
 ## Status
 
