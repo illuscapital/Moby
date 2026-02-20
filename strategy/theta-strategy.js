@@ -349,6 +349,38 @@ async function run() {
   // Step 1: Check exits
   await checkExits(state);
 
+  // Step 1.5: Mark-to-market open positions
+  for (const pos of state.openPositions) {
+    await sleep(RATE_LIMIT_MS);
+    const chain = await getOptionChain(pos.ticker);
+    if (chain.length === 0) {
+      console.log(`  MTM: ${pos.ticker} — no chain data, skipping`);
+      continue;
+    }
+    let exitDebit = 0;
+    let foundAll = true;
+    for (const leg of ['shortCall', 'shortPut', 'longCall', 'longPut']) {
+      const contract = chain.find(c => c.option_symbol === pos[leg].symbol);
+      if (contract) {
+        const mid = (parseFloat(contract.bid || contract.nbbo_bid || 0) + parseFloat(contract.ask || contract.nbbo_ask || 0)) / 2;
+        if (leg.startsWith('short')) exitDebit += mid;
+        else exitDebit -= mid;
+      } else {
+        foundAll = false;
+        // Use entry mid as fallback
+        if (leg.startsWith('short')) exitDebit += pos[leg].mid;
+        else exitDebit -= pos[leg].mid;
+      }
+    }
+    const pnl = (pos.credit - exitDebit) * 100 * pos.contracts;
+    const pnlPct = pos.maxCredit > 0 ? (pnl / pos.maxCredit * 100) : 0;
+    pos.exitDebitMtm = exitDebit;
+    pos.unrealizedPnl = pnl;
+    pos.unrealizedPnlPct = pnlPct;
+    pos.lastMtm = new Date().toISOString();
+    console.log(`  MTM: ${pos.ticker} | credit=${pos.credit.toFixed(3)} debit=${exitDebit.toFixed(3)} | PnL: $${pnl.toFixed(0)} (${pnlPct.toFixed(0)}%)${foundAll ? '' : ' [partial]'}`);
+  }
+
   // Step 2: Find new candidates
   if (state.openPositions.length >= PARAMS.maxOpenPositions) {
     console.log(`Max theta positions (${PARAMS.maxOpenPositions}) reached, skipping scan`);

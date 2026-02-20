@@ -441,16 +441,14 @@ async function run() {
           continue;
         }
 
-        // IV filter — reject extremes
-        if (quote.iv && quote.iv > 0) {
-          if (quote.iv > PARAMS.maxEntryIv) {
-            console.log(`  SKIP (IV too high: ${(quote.iv * 100).toFixed(0)}% > ${(PARAMS.maxEntryIv * 100).toFixed(0)}%): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
-            continue;
-          }
-          if (quote.iv < PARAMS.minEntryIv) {
-            console.log(`  SKIP (IV too low: ${(quote.iv * 100).toFixed(0)}% < ${(PARAMS.minEntryIv * 100).toFixed(0)}%): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
-            continue;
-          }
+        // IV flag — tag extremes for analysis (no longer filtering)
+        let ivFlag = 'OK';
+        if (!quote.iv || quote.iv === 0) {
+          ivFlag = 'NO_DATA';
+        } else if (quote.iv > PARAMS.maxEntryIv) {
+          ivFlag = 'HIGH';
+        } else if (quote.iv < PARAMS.minEntryIv) {
+          ivFlag = 'LOW';
         }
 
         const pricePerContract = quote.price * 100; // options are 100 shares
@@ -464,6 +462,7 @@ async function run() {
           entryBid: quote.bid,
           entryAsk: quote.ask,
           entryIv: quote.iv,
+          ivFlag,
           contracts,
           entryValue,
           status: 'open'

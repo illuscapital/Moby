@@ -2,7 +2,7 @@
 // Generates Moby Theta HTML report to stdout
 const fs = require('fs');
 const path = require('path');
-const STATE_FILE = path.join(__dirname, 'data', 'theta-state.json');
+const STATE_FILE = path.join(__dirname, '..', 'data', 'theta-state.json');
 
 let state;
 try { state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); }
