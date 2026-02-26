@@ -158,20 +158,23 @@ function logTrade(trade) {
 // ─── Option Price Fetching (Yahoo Finance) ───
 async function getOptionPrice(ticker, optionSymbol) {
   try {
-    // Yahoo v8 chart — only source with free option prices (no bid/ask available)
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${optionSymbol}?interval=1d&range=1d`;
-    const result = await fetchJsonRaw(url);
-    if (!result.chart || !result.chart.result || !result.chart.result[0]) return null;
-    const meta = result.chart.result[0].meta;
-    const price = meta.regularMarketPrice;
-    if (!price || price <= 0) return null;
+    // UW option-contracts endpoint — has real NBBO bid/ask
+    const url = `https://api.unusualwhales.com/api/stock/${ticker}/option-contracts?option_symbol=${optionSymbol}`;
+    const result = await fetchJson(url);
+    const c = result?.data?.[0];
+    if (!c) return null;
+    const last = parseFloat(c.last_price) || 0;
+    const bid = parseFloat(c.nbbo_bid) || 0;
+    const ask = parseFloat(c.nbbo_ask) || 0;
+    if (last <= 0 && bid <= 0) return null;
     return {
-      bid: 0, ask: 0, mid: price,
-      last: price,
-      price,
-      iv: 0,
-      volume: meta.regularMarketVolume || 0,
-      oi: 0
+      bid, ask,
+      mid: bid > 0 && ask > 0 ? (bid + ask) / 2 : last,
+      last,
+      price: last,
+      iv: parseFloat(c.implied_volatility) || 0,
+      volume: c.volume || 0,
+      oi: c.open_interest || 0
     };
   } catch (e) {
     console.error(`  Price fetch failed for ${optionSymbol}: ${e.message}`);
@@ -357,11 +360,12 @@ async function run() {
     await sleep(RATE_LIMIT_MS);
     const quote = await getOptionPrice(pos.ticker, pos.optionChain);
     const currentPrice = quote ? quote.price : pos.lastPrice || 0;
-    // Yahoo chart has no bid/ask — use last price for exits (best available)
+    // Use bid for exit (worst-case fill for seller)
+    const exitBidPrice = quote && quote.bid > 0 ? quote.bid : currentPrice;
     const exitCheck = shouldExit(pos, currentPrice);
 
     if (exitCheck.exit) {
-      const exitPrice = currentPrice;
+      const exitPrice = exitBidPrice;
       const contracts = pos.contracts || 1;
       const exitValue = exitPrice * 100 * contracts;
       const pnl = exitValue - pos.entryValue;
@@ -493,11 +497,11 @@ async function run() {
     console.log('\n--- Open Positions (mark-to-market) ---');
     let totalMtm = 0, totalEntry = 0;
     for (const pos of state.openPositions) {
-      // Yahoo chart has no bid/ask — use last traded price for MTM
+      // Use bid for MTM (what you'd get if you sold now)
       if (!pos.lastPrice || pos.lastPrice === pos.entryPrice) {
         await sleep(RATE_LIMIT_MS);
         const quote = await getOptionPrice(pos.ticker, pos.optionChain);
-        if (quote) pos.lastPrice = quote.price;
+        if (quote) pos.lastPrice = quote.bid > 0 ? quote.bid : quote.price;
       }
       const currentPrice = pos.lastPrice || pos.entryPrice;
       const currentValue = currentPrice * 100 * pos.contracts;
