@@ -275,12 +275,25 @@ function filterAlert(alert) {
   };
 }
 
+function isAfterExitWindow() {
+  // Exits only allowed 30 min after market open (10:00 ET)
+  const now = new Date();
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const mins = et.getHours() * 60 + et.getMinutes();
+  return mins >= 600; // 10:00 ET
+}
+
 // ─── Exit Logic ───
 // currentPrice is optional — needed for profit-taking check
 function shouldExit(position, currentPrice) {
   const now = new Date();
   const todayStr = today();
   const d = dte(position.expiry);
+
+  // Block all exits before 10:00 ET (30 min after open)
+  if (!isAfterExitWindow()) {
+    return { exit: false };
+  }
 
   // 1. Profit-taking: exit when unrealized gain >= threshold
   if (currentPrice && position.entryPrice > 0) {
@@ -374,6 +387,7 @@ async function run() {
       const closedPos = {
         ...pos,
         exitDate: today(),
+        exitTime: new Date().toISOString(),
         exitPrice,
         exitValue,
         pnl,
@@ -470,6 +484,7 @@ async function run() {
         const position = {
           ...sig,
           entryDate: today(),
+          entryTime: sig.alertTime || new Date().toISOString(),
           entryPrice,
           entryBid: alertBid,
           entryAsk: alertAsk,
