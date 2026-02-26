@@ -158,6 +158,7 @@ function logTrade(trade) {
 // ─── Option Price Fetching (Yahoo Finance) ───
 async function getOptionPrice(ticker, optionSymbol) {
   try {
+    // Yahoo v8 chart — only source with free option prices (no bid/ask available)
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${optionSymbol}?interval=1d&range=1d`;
     const result = await fetchJsonRaw(url);
     if (!result.chart || !result.chart.result || !result.chart.result[0]) return null;
@@ -169,7 +170,7 @@ async function getOptionPrice(ticker, optionSymbol) {
       last: price,
       price,
       iv: 0,
-      volume: 0,
+      volume: meta.regularMarketVolume || 0,
       oi: 0
     };
   } catch (e) {
@@ -262,6 +263,8 @@ function filterAlert(alert) {
       optionChain: alert.option_chain,
       alertId: alert.id,
       alertTime: alert.created_at,
+      bid: alert.bid,
+      ask: alert.ask,
       otmPct: alert.type === 'call'
         ? ((strike - underlying) / underlying * 100).toFixed(1)
         : ((underlying - strike) / underlying * 100).toFixed(1)
@@ -354,6 +357,7 @@ async function run() {
     await sleep(RATE_LIMIT_MS);
     const quote = await getOptionPrice(pos.ticker, pos.optionChain);
     const currentPrice = quote ? quote.price : pos.lastPrice || 0;
+    // Yahoo chart has no bid/ask — use last price for exits (best available)
     const exitCheck = shouldExit(pos, currentPrice);
 
     if (exitCheck.exit) {
@@ -451,16 +455,20 @@ async function run() {
           ivFlag = 'LOW';
         }
 
-        const pricePerContract = quote.price * 100; // options are 100 shares
+        // Use UW alert's ask for entry (worst-case fill for buyer), fall back to Yahoo last
+        const alertAsk = parseFloat(sig.ask) || 0;
+        const alertBid = parseFloat(sig.bid) || 0;
+        const entryPrice = alertAsk > 0 ? alertAsk : quote.price;
+        const pricePerContract = entryPrice * 100; // options are 100 shares
         const contracts = Math.max(1, Math.floor(PARAMS.maxPositionSize / pricePerContract));
-        const entryValue = quote.price * 100 * contracts;
+        const entryValue = entryPrice * 100 * contracts;
 
         const position = {
           ...sig,
           entryDate: today(),
-          entryPrice: quote.price,
-          entryBid: quote.bid,
-          entryAsk: quote.ask,
+          entryPrice,
+          entryBid: alertBid,
+          entryAsk: alertAsk,
           entryIv: quote.iv,
           ivFlag,
           contracts,
@@ -474,7 +482,7 @@ async function run() {
         output.newSignals.push(position);
         sendSignal(formatEntry(position));
 
-        console.log(`  ENTRY: ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry} | ${contracts}x @ $${quote.price.toFixed(2)} ($${entryValue.toFixed(0)}) | ER: ${sig.earningsDate} (${sig.erTime || '?'}) | ${sig.volOi.toFixed(1)}x vol/OI | sweep:${sig.hasSweep}`);
+        console.log(`  ENTRY: ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry} | ${contracts}x @ $${entryPrice.toFixed(2)} (ask) ($${entryValue.toFixed(0)}) | ER: ${sig.earningsDate} (${sig.erTime || '?'}) | ${sig.volOi.toFixed(1)}x vol/OI | sweep:${sig.hasSweep}`);
       } catch (e) {}
     }
   }
@@ -485,7 +493,7 @@ async function run() {
     console.log('\n--- Open Positions (mark-to-market) ---');
     let totalMtm = 0, totalEntry = 0;
     for (const pos of state.openPositions) {
-      // Use price from Step 1 if available, otherwise fetch
+      // Yahoo chart has no bid/ask — use last traded price for MTM
       if (!pos.lastPrice || pos.lastPrice === pos.entryPrice) {
         await sleep(RATE_LIMIT_MS);
         const quote = await getOptionPrice(pos.ticker, pos.optionChain);
