@@ -50,7 +50,6 @@ Sells put credit spreads against the same flow alerts that Flow buys. When unusu
 - Stop loss: spread cost hits 2x credit received
 - Emergency exit at ≤ 1 DTE, pre-expiry exit at ≤ 3 DTE
 
-**Backtest (vs buying):** Flow buy-side was ($3,573) on 20 trades. With IV filtering, the 8 qualifying trades were +$7,942. Riptide selling the filtered-out high-IV trades with $2.50 spreads backtested +$8,986.
 
 ### 🐋⏳ Theta — Earnings Premium Selling
 
