@@ -1,0 +1,25 @@
+{
+  "name": "moby",
+  "version": "1.0.0",
+  "description": "Options trading bot built on [Unusual Whales](https://unusualwhales.com) data. Three complementary strategies that profit from earnings volatility in different ways.",
+  "main": "collector.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dashboard": "node dashboard/server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/illuscapital/Moby.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/illuscapital/Moby/issues"
+  },
+  "homepage": "https://github.com/illuscapital/Moby#readme",
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}

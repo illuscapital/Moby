@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🐋 Moby Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117; --bg2: #161b22; --bg3: #21262d;
+    --fg: #c9d1d9; --fg2: #8b949e; --fg3: #484f58;
+    --green: #3fb950; --red: #f85149; --blue: #58a6ff;
+    --yellow: #d29922; --purple: #bc8cff; --cyan: #39d2c0;
+    --border: #30363d;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--fg); font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 13px; }
+
+  .header { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+  .header h1 { font-size: 20px; font-weight: 600; }
+  .header h1 span { font-size: 24px; }
+  .header .meta { color: var(--fg2); font-size: 12px; }
+  .refresh-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 6px; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+
+  /* Summary Cards */
+  .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .card .label { color: var(--fg2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .card .value { font-size: 22px; font-weight: 700; }
+  .card .sub { color: var(--fg2); font-size: 11px; margin-top: 4px; }
+  .pos { color: var(--green); }
+  .neg { color: var(--red); }
+
+  /* Strategy Cards */
+  .strat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+  .strat-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .strat-card .strat-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .strat-card .strat-name { font-size: 15px; font-weight: 600; }
+  .strat-card .strat-badge { font-size: 10px; padding: 2px 8px; border-radius: 10px; background: var(--bg3); color: var(--fg2); }
+  .strat-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); }
+  .strat-row:last-child { border-bottom: none; }
+  .strat-row .k { color: var(--fg2); }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 0; margin-bottom: 0; border-bottom: 1px solid var(--border); }
+  .tab { padding: 10px 20px; cursor: pointer; color: var(--fg2); border-bottom: 2px solid transparent; transition: all 0.2s; }
+  .tab:hover { color: var(--fg); }
+  .tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Tables */
+  .table-wrap { overflow-x: auto; margin-top: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { background: var(--bg3); color: var(--fg2); text-align: left; padding: 8px 10px; font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; position: sticky; top: 0; }
+  td { padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  tr:hover td { background: var(--bg3); }
+  .section-title { font-size: 14px; font-weight: 600; margin: 20px 0 8px; color: var(--fg2); }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    .summary-grid { grid-template-columns: repeat(2, 1fr); }
+    .strat-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><span>🐋</span> Moby Dashboard</h1>
+  <div class="meta"><span class="refresh-dot"></span>Auto-refresh 30s &mdash; <span id="lastUpdate">—</span></div>
+</div>
+
+<div class="container">
+  <!-- Summary Cards -->
+  <div class="summary-grid">
+    <div class="card">
+      <div class="label">Total P&L (Realized)</div>
+      <div class="value" id="totalPnl">—</div>
+      <div class="sub" id="totalTrades">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Unrealized P&L</div>
+      <div class="value" id="totalUnrealized">—</div>
+      <div class="sub" id="openCount">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Win Rate</div>
+      <div class="value" id="winRate">—</div>
+      <div class="sub" id="winLoss">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Combined P&L</div>
+      <div class="value" id="combinedPnl">—</div>
+      <div class="sub">Realized + Unrealized</div>
+    </div>
+  </div>
+
+  <!-- Strategy Summary Cards -->
+  <div class="strat-grid">
+    <div class="strat-card" id="flowCard"></div>
+    <div class="strat-card" id="riptideCard"></div>
+    <div class="strat-card" id="thetaCard"></div>
+  </div>
+
+  <!-- Position Tabs -->
+  <div class="tabs">
+    <div class="tab active" data-tab="flow">🐋 Flow</div>
+    <div class="tab" data-tab="riptide">🌊 Riptide</div>
+    <div class="tab" data-tab="theta">⏳ Theta</div>
+    <div class="tab" data-tab="log">📋 Trade Log</div>
+  </div>
+
+  <div id="tab-flow" class="tab-content active"></div>
+  <div id="tab-riptide" class="tab-content"></div>
+  <div id="tab-theta" class="tab-content"></div>
+  <div id="tab-log" class="tab-content"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const pnl = v => v >= 0 ? `$${v.toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 0})}` : `($${Math.abs(v).toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 0})})`;
+const pnlClass = v => v >= 0 ? 'pos' : 'neg';
+const pct = v => v !== null && v !== undefined ? `${v >= 0 ? '+' : ''}${v.toFixed(1)}%` : '—';
+
+// Tabs
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    $(`tab-${tab.dataset.tab}`).classList.add('active');
+  });
+});
+
+function renderStratCard(el, name, emoji, stats) {
+  const wr = (stats.wins + stats.losses) > 0 ? ((stats.wins / (stats.wins + stats.losses)) * 100).toFixed(1) : '—';
+  el.innerHTML = `
+    <div class="strat-header">
+      <span class="strat-name">${emoji} ${name}</span>
+      <span class="strat-badge">${stats.openCount} open</span>
+    </div>
+    <div class="strat-row"><span class="k">Realized</span><span class="${pnlClass(stats.totalPnl)}">${pnl(stats.totalPnl)}</span></div>
+    <div class="strat-row"><span class="k">Unrealized</span><span class="${pnlClass(stats.unrealized)}">${pnl(stats.unrealized)}</span></div>
+    <div class="strat-row"><span class="k">Win Rate</span><span>${wr}%</span></div>
+    <div class="strat-row"><span class="k">Trades</span><span>${stats.wins}W / ${stats.losses}L (${stats.totalTrades})</span></div>
+  `;
+}
+
+function renderFlowTable(state) {
+  let html = '';
+  if (state.openPositions?.length) {
+    html += `<div class="section-title">Open Positions (${state.openPositions.length})</div><div class="table-wrap"><table>
+      <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Expiry</th><th>Entry</th><th>Last</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>ER Date</th><th>Held</th></tr>`;
+    for (const p of state.openPositions) {
+      const held = Math.round((Date.now() - new Date(p.entryDate).getTime()) / 86400000);
+      const upnl = p.unrealizedPnl || 0;
+      const upct = p.entryValue > 0 ? (upnl / p.entryValue * 100) : 0;
+      html += `<tr>
+        <td><strong>${p.ticker}</strong></td><td>${(p.type||'').toUpperCase()}</td><td>$${p.strike}</td><td>${p.expiry}</td>
+        <td>$${p.entryPrice?.toFixed(2)}</td><td>$${(p.lastPrice||0).toFixed(2)}</td><td>${p.contracts}</td>
+        <td class="${pnlClass(upnl)}">${pnl(upnl)}</td><td class="${pnlClass(upnl)}">${pct(upct)}</td>
+        <td>${p.entryIv ? (p.entryIv*100).toFixed(0)+'%' : '—'}</td><td>${p.earningsDate||'—'}</td><td>${held}d</td>
+      </tr>`;
+    }
+    html += '</table></div>';
+  } else {
+    html += '<div class="section-title">No open positions</div>';
+  }
+
+  if (state.closedPositions?.length) {
+    html += `<div class="section-title">Closed Positions (${state.closedPositions.length})</div><div class="table-wrap"><table>
+      <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Entry</th><th>Exit</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>Hold</th><th>Reason</th></tr>`;
+    for (const p of [...state.closedPositions].reverse()) {
+      html += `<tr>
+        <td><strong>${p.ticker}</strong></td><td>${(p.type||'').toUpperCase()}</td><td>$${p.strike}</td>
+        <td>$${p.entryPrice?.toFixed(2)}</td><td>$${p.exitPrice?.toFixed(2)}</td><td>${p.contracts}</td>
+        <td class="${pnlClass(p.pnl)}">${pnl(p.pnl)}</td><td class="${pnlClass(p.pnlPct)}">${pct(p.pnlPct)}</td>
+        <td>${p.entryIv ? (p.entryIv*100).toFixed(0)+'%' : '—'}</td><td>${p.holdDays}d</td>
+        <td>${(p.exitReason||'').split(' ')[0]}</td>
+      </tr>`;
+    }
+    html += '</table></div>';
+  }
+  $('tab-flow').innerHTML = html;
+}
+
+function renderRiptideTable(state) {
+  let html = '';
+  if (state.openPositions?.length) {
+    html += `<div class="section-title">Open Positions (${state.openPositions.length})</div><div class="table-wrap"><table>
+      <tr><th>Ticker</th><th>Spread</th><th>Expiry</th><th>Width</th><th>Credit</th><th>Cost</th><th>Ctrs</th><th>PnL</th><th>Max Risk</th><th>IV</th><th>ER Date</th><th>Held</th></tr>`;
+    for (const p of state.openPositions) {
+      const held = Math.round((Date.now() - new Date(p.entryDate).getTime()) / 86400000);
+      const upnl = p.unrealizedPnl || 0;
+      html += `<tr>
+        <td><strong>${p.ticker}</strong></td><td>${p.strike}P/${p.protectionStrike}P</td><td>${p.expiry}</td>
+        <td>$${p.spreadWidth?.toFixed(2)}</td><td>$${p.creditPerContract?.toFixed(2)}</td>
+        <td>$${(p.currentSpreadCost||0).toFixed(2)}</td><td>${p.contracts}</td>
+        <td class="${pnlClass(upnl)}">${pnl(upnl)}</td><td>${pnl(p.maxRisk||0)}</td>
+        <td>${p.entryIv ? (p.entryIv*100).toFixed(0)+'%' : '—'}</td><td>${p.earningsDate||'—'}</td><td>${held}d</td>
+      </tr>`;
+    }
+    html += '</table></div>';
+  } else {
+    html += '<div class="section-title">No open positions — Riptide is scanning</div>';
+  }
+
+  if (state.closedPositions?.length) {
+    html += `<div class="section-title">Closed Positions (${state.closedPositions.length})</div><div class="table-wrap"><table>
+      <tr><th>Ticker</th><th>Spread</th><th>Credit</th><th>Exit Cost</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>Hold</th><th>Reason</th></tr>`;
+    for (const p of [...state.closedPositions].reverse()) {
+      html += `<tr>
+        <td><strong>${p.ticker}</strong></td><td>${p.strike}P/${p.protectionStrike}P</td>
+        <td>$${p.creditPerContract?.toFixed(2)}</td><td>$${(p.exitCostPerContract||0).toFixed(2)}</td>
+        <td>${p.contracts}</td>
+        <td class="${pnlClass(p.pnl)}">${pnl(p.pnl)}</td><td class="${pnlClass(p.pnlPct)}">${pct(p.pnlPct)}</td>
+        <td>${p.holdDays}d</td><td>${(p.exitReason||'').split(' ')[0]}</td>
+      </tr>`;
+    }
+    html += '</table></div>';
+  }
+  $('tab-riptide').innerHTML = html;
+}
+
+function renderThetaTable(state) {
+  let html = '';
+  if (state.openPositions?.length) {
+    html += `<div class="section-title">Open Positions (${state.openPositions.length})</div><div class="table-wrap"><table>
+      <tr><th>Ticker</th><th>Structure</th><th>Expiry</th><th>Credit</th><th>Debit MTM</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV Rank</th><th>Risk</th><th>ER Date</th><th>Held</th></tr>`;
+    for (const p of state.openPositions) {
+      const held = Math.round((Date.now() - new Date(p.entryDate).getTime()) / 86400000);
+      const upnl = p.unrealizedPnl || 0;
+      const upct = p.unrealizedPnlPct || 0;
+      const struct = `${p.shortCall?.strike}C/${p.longCall?.strike}C | ${p.shortPut?.strike}P/${p.longPut?.strike}P`;
+      html += `<tr>
+        <td><strong>${p.ticker}</strong></td><td>${struct}</td><td>${p.expiry}</td>
+        <td>$${p.credit?.toFixed(2)}</td><td>$${(p.exitDebitMtm||0).toFixed(2)}</td><td>${p.contracts}</td>
+        <td class="${pnlClass(upnl)}">${pnl(upnl)}</td><td class="${pnlClass(upct)}">${pct(upct)}</td>
+        <td>${p.ivRank ? (p.ivRank*100).toFixed(0)+'%' : '—'}</td><td>${pnl(p.totalRisk||0)}</td>
+        <td>${p.earningsDate||'—'} ${p.erTime||''}</td><td>${held}d</td>
+      </tr>`;
+    }
+    html += '</table></div>';
+  } else {
+    html += '<div class="section-title">No open positions</div>';
+  }
+
+  if (state.closedPositions?.length) {
+    html += `<div class="section-title">Closed Positions (${state.closedPositions.length})</div><div class="table-wrap"><table>
+      <tr><th>Ticker</th><th>Structure</th><th>Credit</th><th>Exit Debit</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV Rank</th><th>Hold</th><th>Reason</th></tr>`;
+    for (const p of [...state.closedPositions].reverse()) {
+      const struct = `${p.shortCall?.strike}C/${p.longCall?.strike}C | ${p.shortPut?.strike}P/${p.longPut?.strike}P`;
+      html += `<tr>
+        <td><strong>${p.ticker}</strong></td><td>${struct}</td>
+        <td>$${p.credit?.toFixed(2)}</td><td>$${(p.exitDebit||0).toFixed(2)}</td><td>${p.contracts}</td>
+        <td class="${pnlClass(p.pnl)}">${pnl(p.pnl)}</td><td class="${pnlClass(p.pnlPct)}">${pct(p.pnlPct)}</td>
+        <td>${p.ivRank ? (p.ivRank*100).toFixed(0)+'%' : '—'}</td><td>${p.holdDays}d</td>
+        <td>${(p.exitReason||'').replace(/\(.*\)/, '').trim()}</td>
+      </tr>`;
+    }
+    html += '</table></div>';
+  }
+  $('tab-theta').innerHTML = html;
+}
+
+function renderTradeLog(flow, riptide, theta) {
+  const trades = [];
+  for (const p of (flow?.closedPositions || [])) {
+    trades.push({ date: p.exitDate, time: p.exitTime, strat: '🐋 Flow', ticker: p.ticker, action: 'EXIT', detail: `${p.type?.toUpperCase()} $${p.strike}`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').split(' ')[0] });
+  }
+  for (const p of (riptide?.closedPositions || [])) {
+    trades.push({ date: p.exitDate, time: p.exitTime, strat: '🌊 Riptide', ticker: p.ticker, action: 'EXIT', detail: `${p.strike}P/${p.protectionStrike}P spread`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').split(' ')[0] });
+  }
+  for (const p of (theta?.closedPositions || [])) {
+    trades.push({ date: p.exitDate, time: p.exitTime, strat: '⏳ Theta', ticker: p.ticker, action: 'EXIT', detail: `IC ${p.shortCall?.strike}C/${p.shortPut?.strike}P`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').replace(/\(.*\)/, '').trim() });
+  }
+  trades.sort((a, b) => (b.time || b.date || '').localeCompare(a.time || a.date || ''));
+
+  let html = `<div class="section-title">All Closed Trades (${trades.length})</div><div class="table-wrap"><table>
+    <tr><th>Date</th><th>Strategy</th><th>Ticker</th><th>Detail</th><th>PnL</th><th>PnL%</th><th>Reason</th></tr>`;
+  for (const t of trades) {
+    html += `<tr>
+      <td>${t.date}</td><td>${t.strat}</td><td><strong>${t.ticker}</strong></td><td>${t.detail}</td>
+      <td class="${pnlClass(t.pnl)}">${pnl(t.pnl)}</td><td class="${pnlClass(t.pnlPct)}">${pct(t.pnlPct)}</td>
+      <td>${t.reason}</td>
+    </tr>`;
+  }
+  html += '</table></div>';
+  $('tab-log').innerHTML = html;
+}
+
+async function refresh() {
+  try {
+    const [summary, flow, riptide, theta] = await Promise.all([
+      fetch('/api/summary').then(r => r.json()),
+      fetch('/api/flow').then(r => r.json()),
+      fetch('/api/riptide').then(r => r.json()),
+      fetch('/api/theta').then(r => r.json()),
+    ]);
+
+    const c = summary.combined;
+    $('totalPnl').className = `value ${pnlClass(c.totalPnl)}`;
+    $('totalPnl').textContent = pnl(c.totalPnl);
+    $('totalTrades').textContent = `${c.totalTrades} closed trades`;
+
+    $('totalUnrealized').className = `value ${pnlClass(c.totalUnrealized)}`;
+    $('totalUnrealized').textContent = pnl(c.totalUnrealized);
+    $('openCount').textContent = `${c.openPositions} open positions`;
+
+    const wr = (c.wins + c.losses) > 0 ? ((c.wins / (c.wins + c.losses)) * 100).toFixed(1) : '—';
+    $('winRate').textContent = `${wr}%`;
+    $('winLoss').textContent = `${c.wins}W / ${c.losses}L`;
+
+    const combined = c.totalPnl + c.totalUnrealized;
+    $('combinedPnl').className = `value ${pnlClass(combined)}`;
+    $('combinedPnl').textContent = pnl(combined);
+
+    renderStratCard($('flowCard'), 'Flow', '🐋', summary.flow);
+    renderStratCard($('riptideCard'), 'Riptide', '🌊', summary.riptide);
+    renderStratCard($('thetaCard'), 'Theta', '⏳', summary.theta);
+
+    renderFlowTable(flow);
+    renderRiptideTable(riptide);
+    renderThetaTable(theta);
+    renderTradeLog(flow, riptide, theta);
+
+    $('lastUpdate').textContent = new Date().toLocaleTimeString();
+  } catch (e) {
+    console.error('Refresh failed:', e);
+  }
+}
+
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

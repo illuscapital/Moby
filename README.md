@@ -98,6 +98,9 @@ Moby/
 │   ├── theta-trades.jsonl — Theta trade log
 │   ├── flow-YYYY-MM-DD.jsonl    — Daily flow alert archives
 │   └── screener-YYYY-MM-DD.jsonl — Daily screener archives
+├── dashboard/
+│   ├── server.js          — Express API server (port 3200)
+│   └── index.html         — Single-page dashboard UI
 ├── .githooks/
 │   └── pre-commit         — Blocks commits containing secrets
 └── .env.example
@@ -105,11 +108,20 @@ Moby/
 
 ## Running
 
-Designed to run via OpenClaw cron jobs (every 30min during market hours):
+Designed to run via OpenClaw cron jobs (every 5min during market hours):
 
 ```bash
 node collector.js && node strategy.js && node theta-strategy.js && node riptide-strategy.js
 ```
+
+### Dashboard
+
+```bash
+npm run dashboard
+# → http://localhost:3200
+```
+
+Auto-refreshes every 30 seconds. Shows combined P&L across all three strategies with tabbed views for Flow, Riptide, and Theta positions.
 
 ## Environment Variables
 
