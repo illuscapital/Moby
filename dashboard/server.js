@@ -20,11 +20,29 @@ function readState(file) {
   return JSON.parse(fs.readFileSync(fp, 'utf8'));
 }
 
+// IV filter: exclude NO_DATA and IV > 80% (matches strategy.js PARAMS)
+const MAX_IV = 0.80;
+function passesIvFilter(p) {
+  return p.entryIv && p.entryIv > 0 && p.entryIv <= MAX_IV;
+}
+
 app.get('/api/flow', (req, res) => {
   const state = readState('strategy-state.json');
   if (!state) return res.json({ error: 'No flow state file' });
-  // Strip seenAlertIds (huge array, not needed for dashboard)
   delete state.seenAlertIds;
+
+  // Filter positions by IV
+  state.openPositions = (state.openPositions || []).filter(passesIvFilter);
+  state.closedPositions = (state.closedPositions || []).filter(passesIvFilter);
+
+  // Recalculate stats from filtered closed positions
+  let wins = 0, losses = 0, totalPnl = 0;
+  for (const p of state.closedPositions) {
+    totalPnl += p.pnl || 0;
+    if ((p.pnl || 0) > 0) wins++; else if ((p.pnl || 0) < 0) losses++;
+  }
+  state.stats = { ...state.stats, totalPnl, totalTrades: state.closedPositions.length, wins, losses };
+
   res.json(state);
 });
 
@@ -46,16 +64,22 @@ app.get('/api/summary', (req, res) => {
   const riptide = readState('riptide-state.json');
   const theta = readState('theta-state.json');
 
-  const flowStats = flow?.stats || { totalPnl: 0, totalTrades: 0, wins: 0, losses: 0 };
+  // Apply IV filter to flow data for summary
+  const flowOpen = (flow?.openPositions || []).filter(passesIvFilter);
+  const flowClosed = (flow?.closedPositions || []).filter(passesIvFilter);
+  let fWins = 0, fLosses = 0, fPnl = 0;
+  for (const p of flowClosed) { fPnl += p.pnl || 0; if ((p.pnl||0) > 0) fWins++; else if ((p.pnl||0) < 0) fLosses++; }
+  const flowStats = { totalPnl: fPnl, totalTrades: flowClosed.length, wins: fWins, losses: fLosses };
+
   const riptideStats = riptide?.stats || { totalPnl: 0, totalTrades: 0, wins: 0, losses: 0 };
   const thetaStats = theta?.stats || { totalPnl: 0, totalTrades: 0, wins: 0, losses: 0 };
 
-  const flowUnrealized = (flow?.openPositions || []).reduce((s, p) => s + (p.unrealizedPnl || 0), 0);
+  const flowUnrealized = flowOpen.reduce((s, p) => s + (p.unrealizedPnl || 0), 0);
   const riptideUnrealized = (riptide?.openPositions || []).reduce((s, p) => s + (p.unrealizedPnl || 0), 0);
   const thetaUnrealized = (theta?.openPositions || []).reduce((s, p) => s + (p.unrealizedPnl || 0), 0);
 
   res.json({
-    flow: { ...flowStats, openCount: (flow?.openPositions || []).length, unrealized: flowUnrealized },
+    flow: { ...flowStats, openCount: flowOpen.length, unrealized: flowUnrealized },
     riptide: { ...riptideStats, openCount: (riptide?.openPositions || []).length, unrealized: riptideUnrealized },
     theta: { ...thetaStats, openCount: (theta?.openPositions || []).length, unrealized: thetaUnrealized },
     combined: {
@@ -64,7 +88,7 @@ app.get('/api/summary', (req, res) => {
       totalTrades: flowStats.totalTrades + riptideStats.totalTrades + thetaStats.totalTrades,
       wins: flowStats.wins + riptideStats.wins + thetaStats.wins,
       losses: flowStats.losses + riptideStats.losses + thetaStats.losses,
-      openPositions: (flow?.openPositions || []).length + (riptide?.openPositions || []).length + (theta?.openPositions || []).length
+      openPositions: flowOpen.length + (riptide?.openPositions || []).length + (theta?.openPositions || []).length
     },
     lastUpdated: new Date().toISOString()
   });
