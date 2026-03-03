@@ -28,7 +28,7 @@ const PARAMS = {
   minAskSidePct: 0.70,
 
   // IV filters
-  maxEntryIv: 0.85,             // reject if IV > 85% (IV crush risk too high)
+  maxEntryIv: 0.80,             // reject if IV > 80% (backtest: skip >80% + NO_DATA = +$7,942 vs ($3,573))
   minEntryIv: 0.15,             // reject if IV < 15% (no real volatility priced in)
 
   // Position sizing
@@ -463,14 +463,20 @@ async function run() {
           continue;
         }
 
-        // IV flag — tag extremes for analysis (no longer filtering)
+        // IV filter — reject NO_DATA and extremes (backtest shows +$7,942 with this filter)
         let ivFlag = 'OK';
         if (!quote.iv || quote.iv === 0) {
           ivFlag = 'NO_DATA';
+          console.log(`  SKIP (no IV data): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
+          continue;
         } else if (quote.iv > PARAMS.maxEntryIv) {
           ivFlag = 'HIGH';
+          console.log(`  SKIP (IV too high: ${(quote.iv * 100).toFixed(0)}% > ${(PARAMS.maxEntryIv * 100).toFixed(0)}%): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
+          continue;
         } else if (quote.iv < PARAMS.minEntryIv) {
           ivFlag = 'LOW';
+          console.log(`  SKIP (IV too low: ${(quote.iv * 100).toFixed(0)}% < ${(PARAMS.minEntryIv * 100).toFixed(0)}%): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
+          continue;
         }
 
         // Use UW alert's ask for entry (worst-case fill for buyer), fall back to Yahoo last
