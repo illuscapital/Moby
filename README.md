@@ -1,6 +1,6 @@
 # 🐋 Moby
 
-Options trading bot built on [Unusual Whales](https://unusualwhales.com) data. Two complementary strategies that profit from earnings volatility in opposite ways.
+Options trading bot built on [Unusual Whales](https://unusualwhales.com) data. Three complementary strategies that profit from earnings volatility in different ways.
 
 ## Strategies
 
@@ -26,6 +26,31 @@ Follows unusual options flow into earnings. When smart money makes large, direct
 - Exit at first market open after earnings (BMO → same day, AMC → next day)
 - Pre-expiry exit at ≤ 3 DTE if earnings are after expiry
 - Emergency exit at ≤ 1 DTE
+
+### 🌊 Riptide — Credit Spread Fade
+
+Sells put credit spreads against the same flow alerts that Flow buys. When unusual put activity hits a stock pre-earnings, Riptide fades it — collecting premium and profiting from IV crush when the stock doesn't crash as much as the flow implied.
+
+**Entry Filters:**
+- Puts only — call fades skipped entirely (backtest: calls lost money selling)
+- No sweeps — sweep flow has real smart money conviction, dangerous to fade
+- IV ≥ 60% (need enough inflated premium to sell — no ceiling)
+- IV data required (skip NO_DATA)
+- Same base filters as Flow (premium, vol/OI, DTE, OTM%, earnings window)
+
+**Spread Structure:**
+- Bull put spread: sell alert strike put, buy protection lower
+- Dynamic width: $2.50 for strikes < $50, $5.00 for strikes ≥ $50
+
+**Position Sizing:** 5% of $100K account ($5K max risk per trade), 5 max open
+
+**Exit Rules:**
+- Close at first market open after earnings (same as Flow)
+- Profit target: 50% of credit received
+- Stop loss: spread cost hits 2x credit received
+- Emergency exit at ≤ 1 DTE, pre-expiry exit at ≤ 3 DTE
+
+**Backtest (vs buying):** Flow buy-side was ($3,573) on 20 trades. With IV filtering, the 8 qualifying trades were +$7,942. Riptide selling the filtered-out high-IV trades with $2.50 spreads backtested +$8,986.
 
 ### 🐋⏳ Theta — Earnings Premium Selling
 
@@ -55,6 +80,7 @@ Sells iron condors on earnings stocks where Flow has no directional signal. Prof
 Moby/
 ├── collector.js            — Fetches UW flow alerts + screener data every 30min
 ├── strategy.js             — Flow strategy: filters, entries, exits, mark-to-market
+├── riptide-strategy.js     — Riptide strategy: credit spread fades against flow alerts
 ├── theta-strategy.js       — Theta strategy: iron condor construction + management
 ├── report/
 │   ├── render-report.js    — Generates combined Flow + Theta HTML report
@@ -68,6 +94,8 @@ Moby/
 │   ├── strategy-state.json — Flow positions, stats
 │   ├── theta-state.json   — Theta positions, stats
 │   ├── trades.jsonl       — Flow trade log
+│   ├── riptide-state.json — Riptide positions, stats
+│   ├── riptide-trades.jsonl — Riptide trade log
 │   ├── theta-trades.jsonl — Theta trade log
 │   ├── flow-YYYY-MM-DD.jsonl    — Daily flow alert archives
 │   └── screener-YYYY-MM-DD.jsonl — Daily screener archives
@@ -81,7 +109,7 @@ Moby/
 Designed to run via OpenClaw cron jobs (every 30min during market hours):
 
 ```bash
-node collector.js && node strategy.js && node theta-strategy.js
+node collector.js && node strategy.js && node theta-strategy.js && node riptide-strategy.js
 ```
 
 ## Environment Variables
