@@ -18,13 +18,13 @@ const TRADES_FILE = path.join(DATA_DIR, 'riptide-trades.jsonl');
 // ─── Strategy Parameters ───
 const PARAMS = {
   // Entry filters (from flow alert)
-  minPremium: 200000,
+  minPremium: 100000,
   minVolOiRatio: 5,
   maxDte: 45,
   minDte: 5,
   minOtmPct: 2,
   maxOtmPct: 15,
-  requireEarnings: true,
+  requireEarnings: false,
   earningsWindowDays: 10,
   excludeIndexes: true,
   requireSingleLeg: true,
@@ -50,8 +50,11 @@ const PARAMS = {
   // Exit rules
   profitTakePct: 50,               // close at 50% of max credit received
   stopLossMultiple: 2,             // close if spread cost hits 2x credit (100% loss)
-  emergencyExitDte: 1,             // emergency exit at ≤ 1 DTE
-  preExpiryExitDte: 3,             // exit early if ER is after expiry
+  dteFloor: 7,                     // exit at ≤ 7 DTE — gamma risk ramps exponentially last week
+  timeDecayStopPct: 50,            // exit if 50% of time elapsed and P&L is negative
+  moneynessExitPct: 2,             // exit if underlying within 2% of short strike
+  ivCrushExitPct: 30,              // exit if IV dropped ≥ 30% from entry (edge is gone)
+  earningsProximityDays: 2,        // exit ≤ 2 trading days before ER if one exists
 };
 
 const INDEX_TICKERS = new Set(['SPX', 'SPXW', 'SPY', 'QQQ', 'IWM', 'DIA', 'XSP', 'VIX', 'NDX', 'RUT']);
@@ -180,6 +183,20 @@ async function getOptionPrice(ticker, optionSymbol) {
   }
 }
 
+// ─── Underlying Price ───
+async function getUnderlyingPrice(ticker) {
+  try {
+    await sleep(RATE_LIMIT_MS);
+    const url = `https://api.unusualwhales.com/api/stock/${ticker}/quote`;
+    const result = await fetchJson(url);
+    const price = parseFloat(result?.data?.last || result?.data?.price || 0);
+    return price > 0 ? price : null;
+  } catch (e) {
+    console.error(`  Underlying price fetch failed for ${ticker}: ${e.message}`);
+    return null;
+  }
+}
+
 // ─── Spread Width Calculation ───
 function getSpreadWidth(strike) {
   for (const tier of PARAMS.spreadWidthByStrike) {
@@ -268,64 +285,63 @@ function filterAlert(alert) {
 }
 
 // ─── Exit Logic ───
-function shouldExit(position, currentSpreadCost) {
-  const todayStr = today();
-  const d = dte(position.expiry);
-
+// Priority: Moneyness → Stop loss → Profit target → IV crush → Time decay stop → Earnings proximity → DTE floor
+function shouldExit(position, currentSpreadCost, currentIv, underlyingPrice) {
   if (!isAfterExitWindow()) return { exit: false };
 
-  // 1. Profit take: spread cost dropped to ≤ 50% of original credit
-  //    (we keep the remaining premium)
-  if (currentSpreadCost !== null && currentSpreadCost !== undefined) {
-    const profitPct = ((position.creditPerContract - currentSpreadCost) / position.creditPerContract) * 100;
-    if (profitPct >= PARAMS.profitTakePct) {
-      return { exit: true, reason: `profit_take (${profitPct.toFixed(0)}% of credit captured)` };
-    }
+  const d = dte(position.expiry);
+  const entryDte = Math.round((new Date(position.expiry + 'T16:00:00') - new Date(position.entryDate + 'T16:00:00')) / 86400000);
+  const timeElapsedPct = entryDte > 0 ? ((entryDte - d) / entryDte) * 100 : 100;
+  const pnlPerContract = currentSpreadCost !== null ? position.creditPerContract - currentSpreadCost : null;
+  const isLosing = pnlPerContract !== null && pnlPerContract < 0;
 
-    // 2. Stop loss: spread cost >= 2x credit (100% loss on premium)
+  // 1. Moneyness — underlying within 2% of short strike (thesis is broken)
+  if (underlyingPrice && underlyingPrice > 0) {
+    const distancePct = ((underlyingPrice - position.strike) / underlyingPrice) * 100;
+    if (distancePct <= PARAMS.moneynessExitPct) {
+      return { exit: true, reason: `moneyness (underlying $${underlyingPrice.toFixed(2)} within ${distancePct.toFixed(1)}% of ${position.strike} strike)` };
+    }
+  }
+
+  // 2. Stop loss — spread cost ≥ 2x credit
+  if (currentSpreadCost !== null && currentSpreadCost !== undefined) {
     if (currentSpreadCost >= position.creditPerContract * PARAMS.stopLossMultiple) {
       return { exit: true, reason: `stop_loss (spread cost $${currentSpreadCost.toFixed(2)} ≥ ${PARAMS.stopLossMultiple}x credit $${position.creditPerContract.toFixed(2)})` };
     }
   }
 
-  // 3. Emergency exit: DTE ≤ 1
-  if (d <= PARAMS.emergencyExitDte) {
-    return { exit: true, reason: `emergency_dte (${d} DTE remaining)` };
-  }
-
-  // 4. Pre-expiry exit: if earnings are AFTER option expiry
-  if (position.earningsDate && position.expiry) {
-    if (position.earningsDate > position.expiry && d <= PARAMS.preExpiryExitDte) {
-      return { exit: true, reason: `pre_expiry (ER ${position.earningsDate} after expiry ${position.expiry}, ${d} DTE)` };
+  // 3. Profit target — captured ≥ 50% of credit
+  if (currentSpreadCost !== null && currentSpreadCost !== undefined) {
+    const profitPct = ((position.creditPerContract - currentSpreadCost) / position.creditPerContract) * 100;
+    if (profitPct >= PARAMS.profitTakePct) {
+      return { exit: true, reason: `profit_take (${profitPct.toFixed(0)}% of credit captured)` };
     }
   }
 
-  // 5. Earnings-based exit
+  // 4. IV crush — IV dropped ≥ 30% from entry (the edge is gone, take what we have)
+  if (currentIv && position.entryIv && position.entryIv > 0) {
+    const ivDropPct = ((position.entryIv - currentIv) / position.entryIv) * 100;
+    if (ivDropPct >= PARAMS.ivCrushExitPct && !isLosing) {
+      return { exit: true, reason: `iv_crush (IV ${(position.entryIv * 100).toFixed(0)}% → ${(currentIv * 100).toFixed(0)}%, dropped ${ivDropPct.toFixed(0)}%)` };
+    }
+  }
+
+  // 5. Time decay stop — 50%+ of time elapsed and still losing
+  if (timeElapsedPct >= PARAMS.timeDecayStopPct && isLosing) {
+    return { exit: true, reason: `time_decay_stop (${timeElapsedPct.toFixed(0)}% of time elapsed, P&L $${(pnlPerContract * position.contracts * 100).toFixed(0)})` };
+  }
+
+  // 6. Earnings proximity — exit ≤ 2 trading days before ER
   if (position.earningsDate) {
-    const erDate = position.earningsDate;
-    const erTime = position.erTime;
-
-    if (erTime === 'bmo' || erTime === 'before' || erTime === 'premarket') {
-      if (todayStr >= erDate) {
-        return { exit: true, reason: `earnings_bmo (ER ${erDate} pre-market)` };
-      }
-    } else if (erTime === 'amc' || erTime === 'after' || erTime === 'postmarket') {
-      const erDateObj = new Date(erDate + 'T00:00:00');
-      const nextDay = new Date(erDateObj);
-      nextDay.setDate(nextDay.getDate() + 1);
-      while (nextDay.getDay() === 0 || nextDay.getDay() === 6) nextDay.setDate(nextDay.getDate() + 1);
-      if (todayStr >= nextDay.toISOString().slice(0, 10)) {
-        return { exit: true, reason: `earnings_amc (ER ${erDate} after-close)` };
-      }
-    } else {
-      const erDateObj = new Date(erDate + 'T00:00:00');
-      const nextDay = new Date(erDateObj);
-      nextDay.setDate(nextDay.getDate() + 1);
-      while (nextDay.getDay() === 0 || nextDay.getDay() === 6) nextDay.setDate(nextDay.getDate() + 1);
-      if (todayStr >= nextDay.toISOString().slice(0, 10)) {
-        return { exit: true, reason: `earnings_unknown (ER ${erDate})` };
-      }
+    const erBdays = tradingDaysBetween(new Date(), new Date(position.earningsDate));
+    if (erBdays >= 0 && erBdays <= PARAMS.earningsProximityDays) {
+      return { exit: true, reason: `earnings_proximity (ER ${position.earningsDate} in ${erBdays} trading days)` };
     }
+  }
+
+  // 7. DTE floor — ≤ 7 DTE, gamma risk too high
+  if (d <= PARAMS.dteFloor) {
+    return { exit: true, reason: `dte_floor (${d} DTE remaining, floor is ${PARAMS.dteFloor})` };
   }
 
   return { exit: false };
@@ -353,7 +369,11 @@ async function run() {
     const longBid = longQuote?.bid > 0 ? longQuote.bid : 0;
     const currentSpreadCost = shortAsk - longBid;
 
-    const exitCheck = shouldExit(pos, currentSpreadCost);
+    // Get current IV and underlying price for exit checks
+    const currentIv = shortQuote?.iv || 0;
+    const underlyingPrice = await getUnderlyingPrice(pos.ticker);
+
+    const exitCheck = shouldExit(pos, currentSpreadCost, currentIv, underlyingPrice);
 
     if (exitCheck.exit) {
       const exitCostPerContract = Math.max(0, currentSpreadCost);

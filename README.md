@@ -13,7 +13,7 @@ Follows unusual options flow into earnings. When smart money makes large, direct
 - Volume/OI ≥ 5x (unusual size)
 - DTE: 5–45 days
 - OTM: 2–15%
-- IV: 15–85% (avoids extreme IV crush)
+- IV: 15–80% (skip NO_DATA, avoid extreme IV crush)
 - Earnings within 10 trading days
 - Ask-side ≥ 70% (directional conviction)
 - Single-leg, common stock only
@@ -29,14 +29,17 @@ Follows unusual options flow into earnings. When smart money makes large, direct
 
 ### 🌊 Riptide — Credit Spread Fade
 
-Sells put credit spreads against the same flow alerts that Flow buys. When unusual put activity hits a stock pre-earnings, Riptide fades it — collecting premium and profiting from IV crush when the stock doesn't crash as much as the flow implied.
+Sells put credit spreads against unusual flow alerts. When large put activity spikes IV on a stock, Riptide fades it — collecting premium and profiting from IV crush when the stock doesn't crash as much as the flow implied.
 
 **Entry Filters:**
+- Premium ≥ $100K
 - Puts only — call fades skipped entirely (backtest: calls lost money selling)
 - No sweeps — sweep flow has real smart money conviction, dangerous to fade
 - IV ≥ 60% (need enough inflated premium to sell — no ceiling)
 - IV data required (skip NO_DATA)
-- Same base filters as Flow (premium, vol/OI, DTE, OTM%, earnings window)
+- DTE: 5–45 days, OTM: 2–15%, Vol/OI ≥ 5x
+- Ask-side ≥ 70%, single-leg, no indexes
+- Earnings NOT required — sells premium on any high-IV put flow
 
 **Spread Structure:**
 - Bull put spread: sell alert strike put, buy protection lower
@@ -44,11 +47,14 @@ Sells put credit spreads against the same flow alerts that Flow buys. When unusu
 
 **Position Sizing:** 5% of $100K account ($5K max risk per trade), 5 max open
 
-**Exit Rules:**
-- Close at first market open after earnings (same as Flow)
-- Profit target: 50% of credit received
-- Stop loss: spread cost hits 2x credit received
-- Emergency exit at ≤ 1 DTE, pre-expiry exit at ≤ 3 DTE
+**Exit Rules (priority order):**
+1. **Moneyness** — underlying drops within 2% of short strike (thesis broken)
+2. **Stop loss** — spread cost ≥ 2x credit received (hard cap)
+3. **Profit target** — captured ≥ 50% of credit (don't get greedy)
+4. **IV crush** — IV dropped ≥ 30% from entry AND position is profitable (edge is gone)
+5. **Time decay stop** — 50%+ of time elapsed and P&L is negative (cut losers)
+6. **Earnings proximity** — ≤ 2 trading days before ER if one exists (gap risk)
+7. **DTE floor** — ≤ 7 DTE (gamma risk too high for credit spreads)
 
 
 ### 🐋⏳ Theta — Earnings Premium Selling
