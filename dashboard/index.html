@@ -187,20 +187,28 @@ function renderFlowTable(state) {
   $('tab-flow').innerHTML = html;
 }
 
+function riptideSpreadLabel(p) {
+  const t = (p.type === 'call') ? 'C' : 'P';
+  return `${p.strike}${t}/${p.protectionStrike}${t}`;
+}
+
 function renderRiptideTable(state) {
   let html = '';
   if (state.openPositions?.length) {
     html += `<div class="section-title">Open Positions (${state.openPositions.length})</div><div class="table-wrap"><table>
-      <tr><th>Ticker</th><th>Spread</th><th>Expiry</th><th>Width</th><th>Credit</th><th>Cost</th><th>Ctrs</th><th>PnL</th><th>Max Risk</th><th>IV</th><th>ER Date</th><th>Held</th></tr>`;
+      <tr><th>Ticker</th><th>Type</th><th>Spread</th><th>Expiry</th><th>Credit</th><th>Cost</th><th>Ctrs</th><th>PnL</th><th>Max Risk</th><th>IV</th><th>IV Pctl</th><th>DP $</th><th>Held</th></tr>`;
     for (const p of state.openPositions) {
       const held = Math.round((Date.now() - new Date(p.entryDate).getTime()) / 86400000);
       const upnl = p.unrealizedPnl || 0;
+      const typeLabel = (p.type === 'call') ? '<span style="color:var(--green)">CALL</span>' : '<span style="color:var(--red)">PUT</span>';
+      const ivPctl = p.ivPctl ? `${(p.ivPctl*100).toFixed(0)}%` : '—';
+      const dp = p.dpRecentNotional ? `$${(p.dpRecentNotional/1e6).toFixed(1)}M` : '—';
       html += `<tr>
-        <td><strong>${p.ticker}</strong></td><td>${p.strike}P/${p.protectionStrike}P</td><td>${p.expiry}</td>
-        <td>$${p.spreadWidth?.toFixed(2)}</td><td>$${p.creditPerContract?.toFixed(2)}</td>
+        <td><strong>${p.ticker}</strong></td><td>${typeLabel}</td><td>${riptideSpreadLabel(p)}</td><td>${p.expiry}</td>
+        <td>$${p.creditPerContract?.toFixed(2)}</td>
         <td>$${(p.currentSpreadCost||0).toFixed(2)}</td><td>${p.contracts}</td>
         <td class="${pnlClass(upnl)}">${pnl(upnl)}</td><td>${pnl(p.maxRisk||0)}</td>
-        <td>${p.entryIv ? (p.entryIv*100).toFixed(0)+'%' : '—'}</td><td>${p.earningsDate||'—'}</td><td>${held}d</td>
+        <td>${p.entryIv ? (p.entryIv*100).toFixed(0)+'%' : '—'}</td><td>${ivPctl}</td><td>${dp}</td><td>${held}d</td>
       </tr>`;
     }
     html += '</table></div>';
@@ -210,13 +218,16 @@ function renderRiptideTable(state) {
 
   if (state.closedPositions?.length) {
     html += `<div class="section-title">Closed Positions (${state.closedPositions.length})</div><div class="table-wrap"><table>
-      <tr><th>Ticker</th><th>Spread</th><th>Credit</th><th>Exit Cost</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>Hold</th><th>Reason</th></tr>`;
+      <tr><th>Ticker</th><th>Type</th><th>Spread</th><th>Credit</th><th>Exit Cost</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>IV Pctl</th><th>Hold</th><th>Reason</th></tr>`;
     for (const p of [...state.closedPositions].reverse()) {
+      const typeLabel = (p.type === 'call') ? '<span style="color:var(--green)">CALL</span>' : '<span style="color:var(--red)">PUT</span>';
+      const ivPctl = p.ivPctl ? `${(p.ivPctl*100).toFixed(0)}%` : '—';
       html += `<tr>
-        <td><strong>${p.ticker}</strong></td><td>${p.strike}P/${p.protectionStrike}P</td>
+        <td><strong>${p.ticker}</strong></td><td>${typeLabel}</td><td>${riptideSpreadLabel(p)}</td>
         <td>$${p.creditPerContract?.toFixed(2)}</td><td>$${(p.exitCostPerContract||0).toFixed(2)}</td>
         <td>${p.contracts}</td>
         <td class="${pnlClass(p.pnl)}">${pnl(p.pnl)}</td><td class="${pnlClass(p.pnlPct)}">${pct(p.pnlPct)}</td>
+        <td>${p.entryIv ? (p.entryIv*100).toFixed(0)+'%' : '—'}</td><td>${ivPctl}</td>
         <td>${p.holdDays}d</td><td>${(p.exitReason||'').split(' ')[0]}</td>
       </tr>`;
     }
@@ -272,7 +283,8 @@ function renderTradeLog(flow, riptide, theta) {
     trades.push({ date: p.exitDate, time: p.exitTime, strat: '🐋 Flow', ticker: p.ticker, action: 'EXIT', detail: `${p.type?.toUpperCase()} $${p.strike}`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').split(' ')[0] });
   }
   for (const p of (riptide?.closedPositions || [])) {
-    trades.push({ date: p.exitDate, time: p.exitTime, strat: '🌊 Riptide', ticker: p.ticker, action: 'EXIT', detail: `${p.strike}P/${p.protectionStrike}P spread`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').split(' ')[0] });
+    const rt = (p.type === 'call') ? 'C' : 'P';
+    trades.push({ date: p.exitDate, time: p.exitTime, strat: '🌊 Riptide', ticker: p.ticker, action: 'EXIT', detail: `${p.strike}${rt}/${p.protectionStrike}${rt} spread`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').split(' ')[0] });
   }
   for (const p of (theta?.closedPositions || [])) {
     trades.push({ date: p.exitDate, time: p.exitTime, strat: '⏳ Theta', ticker: p.ticker, action: 'EXIT', detail: `IC ${p.shortCall?.strike}C/${p.shortPut?.strike}P`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').replace(/\(.*\)/, '').trim() });
