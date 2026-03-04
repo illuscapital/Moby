@@ -35,7 +35,7 @@ const PARAMS = {
   skipSweeps: false,               // allow sweeps — high IV = more premium, exit logic protects us
   minEntryIv: 0.60,               // need ≥ 60% IV for enough premium to sell
   // No max IV — the higher the better for selling premium
-  minIvPctl: 0.50,                 // prefer IV above 50th percentile (historically elevated)
+  minIvPctl: 0.70,                 // only sell premium when IV is historically elevated (70th+ pctl)
 
   // Spread construction
   spreadWidthByStrike: [           // dynamic spread width

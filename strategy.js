@@ -35,6 +35,11 @@ const PARAMS = {
   maxPositionSize: 5000,        // $5K per trade
   maxOpenPositions: 10,
 
+  // Dark pool confirmation — boost position size when DP confirms direction
+  dpConfirmMinPrints: 50,          // need at least 50 recent prints to consider
+  dpConfirmMinNotional: 1000000,   // need at least $1M in recent DP notional
+  dpConfirmSizeMultiplier: 1.5,    // 1.5x position size when DP confirms
+
   // Exit rules — NO stop losses
   // Exit at first market open after earnings release
   // Emergency exit if DTE <= 1 and earnings haven't happened
@@ -130,6 +135,17 @@ function isMarketOpen() {
 
 function today() {
   return new Date().toISOString().slice(0, 10);
+}
+
+// ─── Enrichment Cache ───
+const ENRICHMENT_FILE = path.join(DATA_DIR, 'enrichment-cache.json');
+
+function loadEnrichmentCache() {
+  if (fs.existsSync(ENRICHMENT_FILE)) {
+    try { return JSON.parse(fs.readFileSync(ENRICHMENT_FILE, 'utf8')); }
+    catch (e) { return {}; }
+  }
+  return {};
 }
 
 // ─── State Management ───
@@ -423,6 +439,7 @@ async function run() {
   const todayFile = `flow-${today()}.jsonl`;
   const targetFiles = files.filter(f => f === todayFile);
 
+  const enrichmentCache = loadEnrichmentCache();
   let scanned = 0, passed = 0;
 
   for (const file of targetFiles) {
@@ -479,12 +496,19 @@ async function run() {
           continue;
         }
 
+        // Dark pool confirmation check
+        const enrichment = enrichmentCache[sig.ticker] || {};
+        const dpPrintCount = enrichment._dpPrintCount || 0;
+        const dpNotional = enrichment._dpRecentNotional || 0;
+        const dpConfirmed = dpPrintCount >= PARAMS.dpConfirmMinPrints && dpNotional >= PARAMS.dpConfirmMinNotional;
+
         // Use UW alert's ask for entry (worst-case fill for buyer), fall back to Yahoo last
         const alertAsk = parseFloat(sig.ask) || 0;
         const alertBid = parseFloat(sig.bid) || 0;
         const entryPrice = alertAsk > 0 ? alertAsk : quote.price;
         const pricePerContract = entryPrice * 100; // options are 100 shares
-        const contracts = Math.max(1, Math.floor(PARAMS.maxPositionSize / pricePerContract));
+        const effectiveSize = dpConfirmed ? PARAMS.maxPositionSize * PARAMS.dpConfirmSizeMultiplier : PARAMS.maxPositionSize;
+        const contracts = Math.max(1, Math.floor(effectiveSize / pricePerContract));
         const entryValue = entryPrice * 100 * contracts;
 
         const position = {
@@ -498,7 +522,12 @@ async function run() {
           ivFlag,
           contracts,
           entryValue,
-          status: 'open'
+          status: 'open',
+          // Enrichment data
+          dpConfirmed,
+          dpPrintCount,
+          dpNotional,
+          ivPctl: enrichment._ivPctl || null,
         };
 
         state.openPositions.push(position);
@@ -507,7 +536,8 @@ async function run() {
         output.newSignals.push(position);
         sendSignal(formatEntry(position));
 
-        console.log(`  ENTRY: ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry} | ${contracts}x @ $${entryPrice.toFixed(2)} (ask) ($${entryValue.toFixed(0)}) | ER: ${sig.earningsDate} (${sig.erTime || '?'}) | ${sig.volOi.toFixed(1)}x vol/OI | sweep:${sig.hasSweep}`);
+        const dpTag = dpConfirmed ? ' | 🏦 DP confirmed' : '';
+        console.log(`  ENTRY: ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry} | ${contracts}x @ $${entryPrice.toFixed(2)} (ask) ($${entryValue.toFixed(0)}) | ER: ${sig.earningsDate} (${sig.erTime || '?'}) | ${sig.volOi.toFixed(1)}x vol/OI | sweep:${sig.hasSweep}${dpTag}`);
       } catch (e) {}
     }
   }

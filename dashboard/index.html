@@ -153,16 +153,17 @@ function renderFlowTable(state) {
   let html = '';
   if (state.openPositions?.length) {
     html += `<div class="section-title">Open Positions (${state.openPositions.length})</div><div class="table-wrap"><table>
-      <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Expiry</th><th>Entry</th><th>Last</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>ER Date</th><th>Held</th></tr>`;
+      <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Expiry</th><th>Entry</th><th>Last</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>DP</th><th>ER Date</th><th>Held</th></tr>`;
     for (const p of state.openPositions) {
       const held = Math.round((Date.now() - new Date(p.entryDate).getTime()) / 86400000);
       const upnl = p.unrealizedPnl || 0;
       const upct = p.entryValue > 0 ? (upnl / p.entryValue * 100) : 0;
+      const dpBadge = p.dpConfirmed ? '<span style="color:var(--cyan)" title="Dark pool confirmed">🏦</span>' : '—';
       html += `<tr>
         <td><strong>${p.ticker}</strong></td><td>${(p.type||'').toUpperCase()}</td><td>$${p.strike}</td><td>${p.expiry}</td>
         <td>$${p.entryPrice?.toFixed(2)}</td><td>$${(p.lastPrice||0).toFixed(2)}</td><td>${p.contracts}</td>
         <td class="${pnlClass(upnl)}">${pnl(upnl)}</td><td class="${pnlClass(upnl)}">${pct(upct)}</td>
-        <td>${p.entryIv ? (p.entryIv*100).toFixed(0)+'%' : '—'}</td><td>${p.earningsDate||'—'}</td><td>${held}d</td>
+        <td>${p.entryIv ? (p.entryIv*100).toFixed(0)+'%' : '—'}</td><td>${dpBadge}</td><td>${p.earningsDate||'—'}</td><td>${held}d</td>
       </tr>`;
     }
     html += '</table></div>';
