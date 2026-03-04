@@ -19,10 +19,10 @@ const TRADES_FILE = path.join(DATA_DIR, 'riptide-trades.jsonl');
 const PARAMS = {
   // Entry filters (from flow alert)
   minPremium: 100000,
-  minVolOiRatio: 5,
-  maxDte: 45,
+  minVolOiRatio: 3,
+  maxDte: 90,
   minDte: 5,
-  minOtmPct: 2,
+  minOtmPct: 0,
   maxOtmPct: 15,
   requireEarnings: false,
   earningsWindowDays: 10,
@@ -32,7 +32,7 @@ const PARAMS = {
 
   // Riptide-specific: only fade puts, skip sweeps, require high IV
   allowedTypes: ['put', 'call'],    // fade both puts and calls
-  skipSweeps: true,                // sweeps have real conviction — don't fade
+  skipSweeps: false,               // allow sweeps — high IV = more premium, exit logic protects us
   minEntryIv: 0.60,               // need ≥ 60% IV for enough premium to sell
   // No max IV — the higher the better for selling premium
 

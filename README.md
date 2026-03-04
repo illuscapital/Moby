@@ -34,12 +34,12 @@ Sells put credit spreads against unusual flow alerts. When large put activity sp
 **Entry Filters:**
 - Premium ≥ $100K
 - Puts and calls — sells bull put spreads or bear call spreads depending on flow direction
-- No sweeps — sweep flow has real smart money conviction, dangerous to fade
+- Sweeps allowed — high IV = more premium, exit logic protects
 - IV ≥ 60% (need enough inflated premium to sell — no ceiling)
 - IV data required (skip NO_DATA)
-- DTE: 5–45 days, OTM: 2–15%, Vol/OI ≥ 5x
+- DTE: 5–90 days, OTM: 0–15%, Vol/OI ≥ 3x
 - Ask-side ≥ 70%, single-leg, no indexes
-- Earnings NOT required — sells premium on any high-IV put flow
+- Earnings NOT required — sells premium on any high-IV flow
 
 **Spread Structure:**
 - Bull put spread: sell alert strike put, buy protection lower
