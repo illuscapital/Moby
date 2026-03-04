@@ -38,6 +38,7 @@ const PARAMS = {
   minIvPctl: 0.70,                 // only sell premium when IV is historically elevated (70th+ pctl)
 
   // Spread construction
+  minCreditWidthPct: 0.25,         // credit must be ≥ 25% of spread width (risk/reward gate)
   spreadWidthByStrike: [           // dynamic spread width
     { maxStrike: 50, width: 2.50 },
     { maxStrike: Infinity, width: 5.00 },
@@ -515,6 +516,13 @@ async function run() {
 
         if (creditPerContract <= 0.05) {
           console.log(`  SKIP (credit too small: $${creditPerContract.toFixed(2)}): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike}/${protectionStrike} ${sig.expiry}`);
+          continue;
+        }
+
+        // Credit-to-width ratio gate — reject thin premium trades
+        const creditWidthPct = creditPerContract / spreadWidth;
+        if (creditWidthPct < PARAMS.minCreditWidthPct) {
+          console.log(`  SKIP (credit/width ${(creditWidthPct*100).toFixed(0)}% < ${(PARAMS.minCreditWidthPct*100).toFixed(0)}%: $${creditPerContract.toFixed(2)}/$${spreadWidth.toFixed(2)}): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike}/${protectionStrike} ${sig.expiry}`);
           continue;
         }
 
