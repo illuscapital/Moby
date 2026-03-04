@@ -31,7 +31,7 @@ const PARAMS = {
   minAskSidePct: 0.70,
 
   // Riptide-specific: only fade puts, skip sweeps, require high IV
-  allowedTypes: ['put'],           // only fade puts (calls skipped entirely)
+  allowedTypes: ['put', 'call'],    // fade both puts and calls
   skipSweeps: true,                // sweeps have real conviction — don't fade
   minEntryIv: 0.60,               // need ≥ 60% IV for enough premium to sell
   // No max IV — the higher the better for selling premium
@@ -74,8 +74,10 @@ function sendSignal(message) {
 }
 
 function formatEntry(pos) {
-  return `🌊 RIPTIDE ENTRY: ${pos.ticker} ${pos.strike}P bull put spread\n` +
-    `Sell ${pos.strike}P / Buy ${pos.protectionStrike}P ($${pos.spreadWidth.toFixed(2)} wide)\n` +
+  const typeUpper = pos.type === 'put' ? 'P' : 'C';
+  const spreadName = pos.type === 'put' ? 'bull put' : 'bear call';
+  return `🌊 RIPTIDE ENTRY: ${pos.ticker} ${pos.strike}${typeUpper} ${spreadName} spread\n` +
+    `Sell ${pos.strike}${typeUpper} / Buy ${pos.protectionStrike}${typeUpper} ($${pos.spreadWidth.toFixed(2)} wide)\n` +
     `${pos.contracts}x | Credit: $${pos.creditPerContract.toFixed(2)} ($${pos.totalCredit.toFixed(0)} total)\n` +
     `Max risk: $${pos.maxRisk.toFixed(0)} | IV: ${(pos.entryIv * 100).toFixed(0)}%\n` +
     `ER: ${pos.earningsDate} (${pos.erTime || '?'})`;
@@ -84,7 +86,8 @@ function formatEntry(pos) {
 function formatExit(pos) {
   const pnl = pos.pnl;
   const emoji = pnl >= 0 ? '✅' : '❌';
-  return `🌊 RIPTIDE EXIT: ${pos.ticker} ${pos.strike}P spread ${emoji}\n` +
+  const typeUpper = pos.type === 'put' ? 'P' : 'C';
+  return `🌊 RIPTIDE EXIT: ${pos.ticker} ${pos.strike}${typeUpper} spread ${emoji}\n` +
     `Credit $${pos.creditPerContract.toFixed(2)} → Cost $${pos.exitCostPerContract.toFixed(2)}\n` +
     `PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(0)} | Held ${pos.holdDays}d\n` +
     `Reason: ${pos.exitReason}`;
@@ -239,7 +242,9 @@ function filterAlert(alert) {
   const strike = parseFloat(alert.strike || 0);
   const underlying = parseFloat(alert.underlying_price || 0);
   if (strike && underlying) {
-    const otmPct = ((underlying - strike) / underlying) * 100; // put OTM
+    const otmPct = alert.type === 'put'
+      ? ((underlying - strike) / underlying) * 100   // put OTM: strike below underlying
+      : ((strike - underlying) / underlying) * 100;  // call OTM: strike above underlying
     if (otmPct < PARAMS.minOtmPct || otmPct > PARAMS.maxOtmPct) return { pass: false };
   } else return { pass: false };
 
@@ -279,7 +284,9 @@ function filterAlert(alert) {
       alertTime: alert.created_at,
       bid: alert.bid,
       ask: alert.ask,
-      otmPct: ((underlying - strike) / underlying * 100).toFixed(1)
+      otmPct: (alert.type === 'put'
+        ? (underlying - strike) / underlying * 100
+        : (strike - underlying) / underlying * 100).toFixed(1)
     }
   };
 }
@@ -297,7 +304,9 @@ function shouldExit(position, currentSpreadCost, currentIv, underlyingPrice) {
 
   // 1. Moneyness — underlying within 2% of short strike (thesis is broken)
   if (underlyingPrice && underlyingPrice > 0) {
-    const distancePct = ((underlyingPrice - position.strike) / underlyingPrice) * 100;
+    const distancePct = position.type === 'put'
+      ? ((underlyingPrice - position.strike) / underlyingPrice) * 100   // put: underlying dropping toward strike
+      : ((position.strike - underlyingPrice) / underlyingPrice) * 100;  // call: underlying rising toward strike
     if (distancePct <= PARAMS.moneynessExitPct) {
       return { exit: true, reason: `moneyness (underlying $${underlyingPrice.toFixed(2)} within ${distancePct.toFixed(1)}% of ${position.strike} strike)` };
     }
@@ -436,12 +445,12 @@ async function run() {
           p.ticker === sig.ticker && p.strike === sig.strike && p.expiry === sig.expiry
         );
         if (dupe) {
-          console.log(`  SKIP (duplicate): PUT ${sig.ticker} ${sig.strike} ${sig.expiry}`);
+          console.log(`  SKIP (duplicate): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
           continue;
         }
 
         if (state.openPositions.length >= PARAMS.maxOpenPositions) {
-          console.log(`  SKIP (max positions): PUT ${sig.ticker} ${sig.strike} ${sig.expiry}`);
+          console.log(`  SKIP (max positions): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
           continue;
         }
 
@@ -449,30 +458,32 @@ async function run() {
         await sleep(RATE_LIMIT_MS);
         const shortQuote = await getOptionPrice(sig.ticker, sig.optionChain);
         if (!shortQuote || shortQuote.price <= 0) {
-          console.log(`  SKIP (no price): PUT ${sig.ticker} ${sig.strike} ${sig.expiry}`);
+          console.log(`  SKIP (no price): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
           continue;
         }
 
         // IV filter: require IV data, minimum 60%, no ceiling
         if (!shortQuote.iv || shortQuote.iv === 0) {
-          console.log(`  SKIP (no IV data): PUT ${sig.ticker} ${sig.strike} ${sig.expiry}`);
+          console.log(`  SKIP (no IV data): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
           continue;
         }
         if (shortQuote.iv < PARAMS.minEntryIv) {
-          console.log(`  SKIP (IV too low: ${(shortQuote.iv * 100).toFixed(0)}% < ${(PARAMS.minEntryIv * 100).toFixed(0)}%): PUT ${sig.ticker} ${sig.strike} ${sig.expiry}`);
+          console.log(`  SKIP (IV too low: ${(shortQuote.iv * 100).toFixed(0)}% < ${(PARAMS.minEntryIv * 100).toFixed(0)}%): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
           continue;
         }
 
-        // Calculate spread
+        // Calculate spread — puts: buy lower protection, calls: buy higher protection
         const spreadWidth = getSpreadWidth(sig.strike);
-        const protectionStrike = sig.strike - spreadWidth;
-        const protectionSymbol = buildOptionSymbol(sig.ticker, sig.expiry, 'put', protectionStrike);
+        const protectionStrike = sig.type === 'put'
+          ? sig.strike - spreadWidth    // bull put spread: protection below
+          : sig.strike + spreadWidth;   // bear call spread: protection above
+        const protectionSymbol = buildOptionSymbol(sig.ticker, sig.expiry, sig.type, protectionStrike);
 
         // Fetch protection leg price
         await sleep(RATE_LIMIT_MS);
         const longQuote = await getOptionPrice(sig.ticker, protectionSymbol);
         if (!longQuote) {
-          console.log(`  SKIP (no protection leg price): PUT ${sig.ticker} ${protectionStrike} ${sig.expiry}`);
+          console.log(`  SKIP (no protection leg price): ${sig.type.toUpperCase()} ${sig.ticker} ${protectionStrike} ${sig.expiry}`);
           continue;
         }
 
@@ -482,7 +493,7 @@ async function run() {
         const creditPerContract = shortBid - longAsk;
 
         if (creditPerContract <= 0.05) {
-          console.log(`  SKIP (credit too small: $${creditPerContract.toFixed(2)}): PUT ${sig.ticker} ${sig.strike}/${protectionStrike} ${sig.expiry}`);
+          console.log(`  SKIP (credit too small: $${creditPerContract.toFixed(2)}): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike}/${protectionStrike} ${sig.expiry}`);
           continue;
         }
 
@@ -520,7 +531,7 @@ async function run() {
         output.newSignals.push(position);
         sendSignal(formatEntry(position));
 
-        console.log(`  ENTRY: PUT ${sig.ticker} ${sig.strike}/${protectionStrike} ${sig.expiry} | ${contracts}x | credit $${creditPerContract.toFixed(2)} ($${totalCredit.toFixed(0)}) | max risk $${maxRisk.toFixed(0)} | IV: ${(shortQuote.iv * 100).toFixed(0)}% | ER: ${sig.earningsDate}`);
+        console.log(`  ENTRY: ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike}/${protectionStrike} ${sig.expiry} | ${contracts}x | credit $${creditPerContract.toFixed(2)} ($${totalCredit.toFixed(0)}) | max risk $${maxRisk.toFixed(0)} | IV: ${(shortQuote.iv * 100).toFixed(0)}% | ER: ${sig.earningsDate}`);
       } catch (e) {
         console.error(`  Error processing alert: ${e.message}`);
       }

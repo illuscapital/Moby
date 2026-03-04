@@ -33,7 +33,7 @@ Sells put credit spreads against unusual flow alerts. When large put activity sp
 
 **Entry Filters:**
 - Premium ≥ $100K
-- Puts only — call fades skipped entirely (backtest: calls lost money selling)
+- Puts and calls — sells bull put spreads or bear call spreads depending on flow direction
 - No sweeps — sweep flow has real smart money conviction, dangerous to fade
 - IV ≥ 60% (need enough inflated premium to sell — no ceiling)
 - IV data required (skip NO_DATA)
