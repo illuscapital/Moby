@@ -35,6 +35,7 @@ const PARAMS = {
   skipSweeps: false,               // allow sweeps — high IV = more premium, exit logic protects us
   minEntryIv: 0.60,               // need ≥ 60% IV for enough premium to sell
   // No max IV — the higher the better for selling premium
+  minIvPctl: 0.50,                 // prefer IV above 50th percentile (historically elevated)
 
   // Spread construction
   spreadWidthByStrike: [           // dynamic spread width
@@ -136,6 +137,17 @@ function isAfterExitWindow() {
   const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const mins = et.getHours() * 60 + et.getMinutes();
   return mins >= 600; // 10:00 ET
+}
+
+// ─── Enrichment Cache ───
+const ENRICHMENT_FILE = path.join(DATA_DIR, 'enrichment-cache.json');
+
+function loadEnrichmentCache() {
+  if (fs.existsSync(ENRICHMENT_FILE)) {
+    try { return JSON.parse(fs.readFileSync(ENRICHMENT_FILE, 'utf8')); }
+    catch (e) { return {}; }
+  }
+  return {};
 }
 
 // ─── State Management ───
@@ -418,6 +430,7 @@ async function run() {
   }
 
   // ── Step 2: Scan for new signals ──
+  const enrichmentCache = loadEnrichmentCache();
   const todayFile = `flow-${today()}.jsonl`;
   const filePath = path.join(DATA_DIR, todayFile);
   if (!fs.existsSync(filePath)) {
@@ -472,6 +485,14 @@ async function run() {
           continue;
         }
 
+        // Enrichment check: IV percentile (historically elevated?)
+        const enrichment = enrichmentCache[sig.ticker] || {};
+        const ivPctl = enrichment._ivPctl || 0;
+        if (PARAMS.minIvPctl > 0 && ivPctl > 0 && ivPctl < PARAMS.minIvPctl) {
+          console.log(`  SKIP (IV pctl too low: ${(ivPctl * 100).toFixed(0)}% < ${(PARAMS.minIvPctl * 100).toFixed(0)}%): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
+          continue;
+        }
+
         // Calculate spread — puts: buy lower protection, calls: buy higher protection
         const spreadWidth = getSpreadWidth(sig.strike);
         const protectionStrike = sig.type === 'put'
@@ -522,7 +543,12 @@ async function run() {
           shortAsk: shortQuote.ask,
           longBid: longQuote.bid,
           longAsk,
-          status: 'open'
+          status: 'open',
+          // Enrichment data
+          ivPctl: ivPctl || null,
+          dpPrintCount: enrichment._dpPrintCount || null,
+          dpRecentNotional: enrichment._dpRecentNotional || null,
+          dpAvgPrintSize: enrichment._dpAvgPrintSize || null,
         };
 
         state.openPositions.push(position);
@@ -531,7 +557,9 @@ async function run() {
         output.newSignals.push(position);
         sendSignal(formatEntry(position));
 
-        console.log(`  ENTRY: ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike}/${protectionStrike} ${sig.expiry} | ${contracts}x | credit $${creditPerContract.toFixed(2)} ($${totalCredit.toFixed(0)}) | max risk $${maxRisk.toFixed(0)} | IV: ${(shortQuote.iv * 100).toFixed(0)}% | ER: ${sig.earningsDate}`);
+        const pctlStr = ivPctl > 0 ? ` | IVpctl: ${(ivPctl * 100).toFixed(0)}%` : '';
+        const dpStr = enrichment._dpRecentNotional ? ` | DP: $${(enrichment._dpRecentNotional / 1e6).toFixed(1)}M` : '';
+        console.log(`  ENTRY: ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike}/${protectionStrike} ${sig.expiry} | ${contracts}x | credit $${creditPerContract.toFixed(2)} ($${totalCredit.toFixed(0)}) | max risk $${maxRisk.toFixed(0)} | IV: ${(shortQuote.iv * 100).toFixed(0)}%${pctlStr}${dpStr}`);
       } catch (e) {
         console.error(`  Error processing alert: ${e.message}`);
       }
