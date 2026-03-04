@@ -70,7 +70,7 @@
 
 <div class="header">
   <h1><span>🐋</span> Moby Dashboard</h1>
-  <div class="meta"><span class="refresh-dot"></span>Auto-refresh 30s &mdash; <span id="lastUpdate">—</span></div>
+  <div class="meta"><span class="refresh-dot"></span>Auto-refresh 30s &mdash; <span id="lastUpdate">—</span><span id="epochBadge"></span></div>
 </div>
 
 <div class="container">
@@ -341,6 +341,9 @@ async function refresh() {
     renderTradeLog(flow, riptide, theta);
 
     $('lastUpdate').textContent = new Date().toLocaleTimeString();
+    if (summary.epoch) {
+      $('epochBadge').innerHTML = ` &mdash; <span style="color:var(--yellow)">📌 Epoch: ${summary.epoch}</span>`;
+    }
   } catch (e) {
     console.error('Refresh failed:', e);
   }
