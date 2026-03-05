@@ -29,27 +29,30 @@ Follows unusual options flow into earnings. When smart money makes large, direct
 
 ### 🌊 Riptide — Credit Spread Fade
 
-Sells put credit spreads against unusual flow alerts. When large put activity spikes IV on a stock, Riptide fades it — collecting premium and profiting from IV crush when the stock doesn't crash as much as the flow implied.
+Sells credit spreads against unusual flow alerts. When large options activity spikes IV on a stock, Riptide fades it — collecting premium and profiting from IV crush when the stock doesn't move as much as the flow implied.
 
 **Entry Filters:**
 - Premium ≥ $100K
 - Puts and calls — sells bull put spreads or bear call spreads depending on flow direction
 - Sweeps allowed — high IV = more premium, exit logic protects
 - IV ≥ 60% (need enough inflated premium to sell — no ceiling)
-- IV data required (skip NO_DATA)
-- DTE: 5–90 days, OTM: 0–15%, Vol/OI ≥ 3x
+- IV percentile ≥ 70th (only sell when IV is historically elevated)
+- DTE: 5–90 days, Vol/OI ≥ 3x
+- **OTM: 10–30%** (short strike must be ≥ 10% out-of-the-money)
+- **Min credit: $1.50/contract** (eliminates bad risk/reward trades)
+- **Earnings exclusion: skip if ER within 14 days** (avoid vol events)
+- Credit ≥ 25% of spread width (risk/reward gate)
 - Ask-side ≥ 70%, single-leg, no indexes
-- Earnings NOT required — sells premium on any high-IV flow
 
 **Spread Structure:**
-- Bull put spread: sell alert strike put, buy protection lower
+- Bull put spread (bearish flow) or bear call spread (bullish flow)
 - Dynamic width: $2.50 for strikes < $50, $5.00 for strikes ≥ $50
 
 **Position Sizing:** 5% of $100K account ($5K max risk per trade), 5 max open
 
 **Exit Rules (priority order):**
-1. **Moneyness** — underlying drops within 2% of short strike (thesis broken)
-2. **Stop loss** — spread cost ≥ 2x credit received (hard cap)
+1. **Moneyness** — underlying within 2% of short strike (thesis broken)
+2. **Stop loss** — spread cost ≥ 3x credit received (hard cap)
 3. **Profit target** — captured ≥ 50% of credit (don't get greedy)
 4. **IV crush** — IV dropped ≥ 30% from entry AND position is profitable (edge is gone)
 5. **Time decay stop** — 50%+ of time elapsed and P&L is negative (cut losers)
@@ -96,12 +99,12 @@ Moby/
 ├── scripts/
 │   └── flow-alert.js      — Standalone flow alert scanner with file-based dedup
 ├── data/                   — Runtime state (gitignored)
-│   ├── strategy-state.json — Flow positions, stats
-│   ├── theta-state.json   — Theta positions, stats
-│   ├── trades.jsonl       — Flow trade log
-│   ├── riptide-state.json — Riptide positions, stats
-│   ├── riptide-trades.jsonl — Riptide trade log
-│   ├── theta-trades.jsonl — Theta trade log
+│   ├── strategy-state.json — Flow open positions + seen alerts
+│   ├── theta-state.json   — Theta open positions
+│   ├── riptide-state.json — Riptide open positions
+│   ├── trades.jsonl       — Flow trade log (source of truth for closed positions)
+│   ├── riptide-trades.jsonl — Riptide trade log (source of truth)
+│   ├── theta-trades.jsonl — Theta trade log (source of truth)
 │   ├── flow-YYYY-MM-DD.jsonl    — Daily flow alert archives
 │   └── screener-YYYY-MM-DD.jsonl — Daily screener archives
 ├── dashboard/
