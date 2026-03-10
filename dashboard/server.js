@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 // Moby Dashboard — Express server for Flow, Riptide, and Theta strategies
+// Trade history: JSONL files are source of truth (append-only, crash-safe)
+// State files: only used for openPositions and seenAlertIds
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -10,17 +12,45 @@ const DATA_DIR = path.join(__dirname, '..', 'data');
 const EPOCH = process.env.MOBY_EPOCH || null;
 const EPOCH_MS = EPOCH ? new Date(EPOCH).getTime() : 0;
 
+// JSONL trade log files (source of truth for closed positions)
+const TRADE_FILES = {
+  flow: path.join(DATA_DIR, 'trades.jsonl'),
+  riptide: path.join(DATA_DIR, 'riptide-trades.jsonl'),
+  theta: path.join(DATA_DIR, 'theta-trades.jsonl'),
+  yolo: path.join(DATA_DIR, 'yolo-trades.jsonl'),
+};
+
 const app = express();
 
 // Serve static frontend
 app.use(express.static(__dirname));
 
-// ─── API Endpoints ───
+// ─── Shared Helpers ───
 
 function readState(file) {
   const fp = path.join(DATA_DIR, file);
   if (!fs.existsSync(fp)) return null;
   return JSON.parse(fs.readFileSync(fp, 'utf8'));
+}
+
+/**
+ * Parse JSONL trade log → closedPositions array.
+ * Each CLOSE line is a closed position. Filters by epoch.
+ */
+function readClosedFromJsonl(filePath, extraFilter) {
+  if (!fs.existsSync(filePath)) return [];
+  const lines = fs.readFileSync(filePath, 'utf8').trim().split('\n').filter(Boolean);
+  const closed = [];
+  for (const line of lines) {
+    try {
+      const trade = JSON.parse(line);
+      if (!trade.action || !trade.action.startsWith('CLOSE')) continue;
+      if (!passesEpochFilter(trade)) continue;
+      if (extraFilter && !extraFilter(trade)) continue;
+      closed.push(trade);
+    } catch { /* skip malformed lines */ }
+  }
+  return closed;
 }
 
 // Epoch filter: exclude positions entered before MOBY_EPOCH
@@ -36,64 +66,93 @@ function passesIvFilter(p) {
   return p.entryIv && p.entryIv > 0 && p.entryIv <= MAX_IV;
 }
 
+/** Compute stats from an array of closed positions */
+function computeStats(closed, extras) {
+  let wins = 0, losses = 0, totalPnl = 0;
+  for (const p of closed) {
+    totalPnl += p.pnl || 0;
+    if ((p.pnl || 0) > 0) wins++; else if ((p.pnl || 0) < 0) losses++;
+  }
+  return { totalPnl, totalTrades: closed.length, wins, losses, ...extras };
+}
+
+// ─── API Endpoints ───
+
 app.get('/api/flow', (req, res) => {
   const state = readState('strategy-state.json');
   if (!state) return res.json({ error: 'No flow state file' });
   delete state.seenAlertIds;
 
-  // Filter positions by IV and epoch
-  state.openPositions = (state.openPositions || []).filter(p => passesIvFilter(p) && passesEpochFilter(p));
-  state.closedPositions = (state.closedPositions || []).filter(p => passesIvFilter(p) && passesEpochFilter(p));
+  const openPositions = (state.openPositions || []).filter(p => passesIvFilter(p) && passesEpochFilter(p));
+  const closedPositions = readClosedFromJsonl(TRADE_FILES.flow, passesIvFilter);
 
-  // Recalculate stats from filtered closed positions
-  let wins = 0, losses = 0, totalPnl = 0;
-  for (const p of state.closedPositions) {
-    totalPnl += p.pnl || 0;
-    if ((p.pnl || 0) > 0) wins++; else if ((p.pnl || 0) < 0) losses++;
-  }
-  state.stats = { ...state.stats, totalPnl, totalTrades: state.closedPositions.length, wins, losses };
-
-  res.json(state);
+  res.json({
+    openPositions,
+    closedPositions,
+    stats: computeStats(closedPositions),
+    lastRun: state.lastRun,
+  });
 });
 
 app.get('/api/riptide', (req, res) => {
   const state = readState('riptide-state.json');
-  if (!state) return res.json({ openPositions: [], closedPositions: [], stats: { totalPnl: 0, totalTrades: 0, wins: 0, losses: 0, totalCreditCollected: 0 } });
-  delete state.seenAlertIds;
+  const openPositions = (state?.openPositions || []).filter(passesEpochFilter);
+  const closedPositions = readClosedFromJsonl(TRADE_FILES.riptide);
 
-  // Apply epoch filter
-  state.openPositions = (state.openPositions || []).filter(passesEpochFilter);
-  state.closedPositions = (state.closedPositions || []).filter(passesEpochFilter);
+  let totalCredit = 0;
+  for (const p of closedPositions) totalCredit += p.totalCredit || 0;
+  for (const p of openPositions) totalCredit += p.totalCredit || 0;
 
-  // Recalculate stats from filtered positions
-  let wins = 0, losses = 0, totalPnl = 0, totalCredit = 0;
-  for (const p of state.closedPositions) {
-    totalPnl += p.pnl || 0;
-    totalCredit += p.totalCredit || 0;
-    if ((p.pnl || 0) > 0) wins++; else if ((p.pnl || 0) < 0) losses++;
-  }
-  for (const p of state.openPositions) totalCredit += p.totalCredit || 0;
-  state.stats = { totalPnl, totalTrades: state.closedPositions.length, wins, losses, totalCreditCollected: totalCredit };
-
-  res.json(state);
+  res.json({
+    openPositions,
+    closedPositions,
+    stats: computeStats(closedPositions, { totalCreditCollected: totalCredit }),
+    lastRun: state?.lastRun,
+  });
 });
 
 app.get('/api/theta', (req, res) => {
   const state = readState('theta-state.json');
   if (!state) return res.json({ error: 'No theta state file' });
 
-  // Apply epoch filter
-  state.openPositions = (state.openPositions || []).filter(passesEpochFilter);
-  state.closedPositions = (state.closedPositions || []).filter(passesEpochFilter);
+  const openPositions = (state.openPositions || []).filter(passesEpochFilter);
+  const closedPositions = readClosedFromJsonl(TRADE_FILES.theta);
 
-  let wins = 0, losses = 0, totalPnl = 0;
-  for (const p of state.closedPositions) {
-    totalPnl += p.pnl || 0;
-    if ((p.pnl || 0) > 0) wins++; else if ((p.pnl || 0) < 0) losses++;
-  }
-  state.stats = { ...state.stats, totalPnl, totalTrades: state.closedPositions.length, wins, losses };
+  res.json({
+    openPositions,
+    closedPositions,
+    stats: computeStats(closedPositions),
+    lastRun: state.lastRun,
+  });
+});
 
-  res.json(state);
+app.get('/api/yolo', (req, res) => {
+  const state = readState('yolo-state.json');
+  const openPositions = (state?.openPositions || []).filter(passesEpochFilter);
+  const closedPositions = readClosedFromJsonl(TRADE_FILES.yolo);
+
+  let totalInvested = 0;
+  for (const p of closedPositions) totalInvested += p.totalCost || 0;
+  for (const p of openPositions) totalInvested += p.totalCost || 0;
+
+  // Delta stats
+  const allPos = [...openPositions, ...closedPositions];
+  const deltas = allPos.filter(p => p.priceDelta !== null && p.priceDelta !== undefined);
+  const deltaStats = deltas.length > 0 ? {
+    avgDelta: deltas.reduce((s, p) => s + p.priceDelta, 0) / deltas.length,
+    avgDeltaPct: deltas.reduce((s, p) => s + (p.priceDeltaPct || 0), 0) / deltas.length,
+    avgDelaySec: deltas.reduce((s, p) => s + (p.alertDelaySec || 0), 0) / deltas.length,
+    totalSlippage: deltas.reduce((s, p) => s + (p.priceDelta * p.contracts * 100), 0),
+    samples: deltas.length,
+  } : null;
+
+  res.json({
+    openPositions,
+    closedPositions,
+    stats: computeStats(closedPositions, { totalInvested }),
+    deltaStats,
+    lastRun: state?.lastRun,
+  });
 });
 
 app.get('/api/summary', (req, res) => {
@@ -101,41 +160,40 @@ app.get('/api/summary', (req, res) => {
   const riptide = readState('riptide-state.json');
   const theta = readState('theta-state.json');
 
-  // Apply IV + epoch filters to flow data for summary
   const flowOpen = (flow?.openPositions || []).filter(p => passesIvFilter(p) && passesEpochFilter(p));
-  const flowClosed = (flow?.closedPositions || []).filter(p => passesIvFilter(p) && passesEpochFilter(p));
-  let fWins = 0, fLosses = 0, fPnl = 0;
-  for (const p of flowClosed) { fPnl += p.pnl || 0; if ((p.pnl||0) > 0) fWins++; else if ((p.pnl||0) < 0) fLosses++; }
-  const flowStats = { totalPnl: fPnl, totalTrades: flowClosed.length, wins: fWins, losses: fLosses };
+  const flowClosed = readClosedFromJsonl(TRADE_FILES.flow, passesIvFilter);
+  const flowStats = computeStats(flowClosed);
 
-  // Apply epoch filter to riptide and theta for summary
   const riptideOpen = (riptide?.openPositions || []).filter(passesEpochFilter);
-  const riptideClosed = (riptide?.closedPositions || []).filter(passesEpochFilter);
-  let rWins = 0, rLosses = 0, rPnl = 0;
-  for (const p of riptideClosed) { rPnl += p.pnl || 0; if ((p.pnl||0) > 0) rWins++; else if ((p.pnl||0) < 0) rLosses++; }
-  const riptideStats = { totalPnl: rPnl, totalTrades: riptideClosed.length, wins: rWins, losses: rLosses };
+  const riptideClosed = readClosedFromJsonl(TRADE_FILES.riptide);
+  const riptideStats = computeStats(riptideClosed);
 
   const thetaOpen = (theta?.openPositions || []).filter(passesEpochFilter);
-  const thetaClosed = (theta?.closedPositions || []).filter(passesEpochFilter);
-  let tWins = 0, tLosses = 0, tPnl = 0;
-  for (const p of thetaClosed) { tPnl += p.pnl || 0; if ((p.pnl||0) > 0) tWins++; else if ((p.pnl||0) < 0) tLosses++; }
-  const thetaStats = { totalPnl: tPnl, totalTrades: thetaClosed.length, wins: tWins, losses: tLosses };
+  const thetaClosed = readClosedFromJsonl(TRADE_FILES.theta);
+  const thetaStats = computeStats(thetaClosed);
+
+  const yolo = readState('yolo-state.json');
+  const yoloOpen = (yolo?.openPositions || []).filter(passesEpochFilter);
+  const yoloClosed = readClosedFromJsonl(TRADE_FILES.yolo);
+  const yoloStats = computeStats(yoloClosed);
 
   const flowUnrealized = flowOpen.reduce((s, p) => s + (p.unrealizedPnl || 0), 0);
   const riptideUnrealized = riptideOpen.reduce((s, p) => s + (p.unrealizedPnl || 0), 0);
   const thetaUnrealized = thetaOpen.reduce((s, p) => s + (p.unrealizedPnl || 0), 0);
+  const yoloUnrealized = yoloOpen.reduce((s, p) => s + (p.unrealizedPnl || 0), 0);
 
   res.json({
     flow: { ...flowStats, openCount: flowOpen.length, unrealized: flowUnrealized },
-    riptide: { ...riptideStats, openCount: (riptide?.openPositions || []).length, unrealized: riptideUnrealized },
-    theta: { ...thetaStats, openCount: (theta?.openPositions || []).length, unrealized: thetaUnrealized },
+    riptide: { ...riptideStats, openCount: riptideOpen.length, unrealized: riptideUnrealized },
+    theta: { ...thetaStats, openCount: thetaOpen.length, unrealized: thetaUnrealized },
+    yolo: { ...yoloStats, openCount: yoloOpen.length, unrealized: yoloUnrealized },
     combined: {
-      totalPnl: flowStats.totalPnl + riptideStats.totalPnl + thetaStats.totalPnl,
-      totalUnrealized: flowUnrealized + riptideUnrealized + thetaUnrealized,
-      totalTrades: flowStats.totalTrades + riptideStats.totalTrades + thetaStats.totalTrades,
-      wins: flowStats.wins + riptideStats.wins + thetaStats.wins,
-      losses: flowStats.losses + riptideStats.losses + thetaStats.losses,
-      openPositions: flowOpen.length + riptideOpen.length + thetaOpen.length
+      totalPnl: flowStats.totalPnl + riptideStats.totalPnl + thetaStats.totalPnl + yoloStats.totalPnl,
+      totalUnrealized: flowUnrealized + riptideUnrealized + thetaUnrealized + yoloUnrealized,
+      totalTrades: flowStats.totalTrades + riptideStats.totalTrades + thetaStats.totalTrades + yoloStats.totalTrades,
+      wins: flowStats.wins + riptideStats.wins + thetaStats.wins + yoloStats.wins,
+      losses: flowStats.losses + riptideStats.losses + thetaStats.losses + yoloStats.losses,
+      openPositions: flowOpen.length + riptideOpen.length + thetaOpen.length + yoloOpen.length
     },
     lastUpdated: new Date().toISOString(),
     epoch: EPOCH || null

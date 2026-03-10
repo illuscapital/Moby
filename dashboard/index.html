@@ -62,7 +62,7 @@
   /* Responsive */
   @media (max-width: 900px) {
     .summary-grid { grid-template-columns: repeat(2, 1fr); }
-    .strat-grid { grid-template-columns: 1fr; }
+    .strat-grid { grid-template-columns: repeat(2, 1fr) !important; }
   }
 </style>
 </head>
@@ -77,7 +77,12 @@
   <!-- Summary Cards -->
   <div class="summary-grid">
     <div class="card">
-      <div class="label">Total P&L (Realized)</div>
+      <div class="label">Total P&L</div>
+      <div class="value" id="combinedPnl">—</div>
+      <div class="sub">Realized + Unrealized</div>
+    </div>
+    <div class="card">
+      <div class="label">Realized P&L</div>
       <div class="value" id="totalPnl">—</div>
       <div class="sub" id="totalTrades">—</div>
     </div>
@@ -91,18 +96,14 @@
       <div class="value" id="winRate">—</div>
       <div class="sub" id="winLoss">—</div>
     </div>
-    <div class="card">
-      <div class="label">Combined P&L</div>
-      <div class="value" id="combinedPnl">—</div>
-      <div class="sub">Realized + Unrealized</div>
-    </div>
   </div>
 
   <!-- Strategy Summary Cards -->
-  <div class="strat-grid">
+  <div class="strat-grid" style="grid-template-columns: repeat(4, 1fr);">
     <div class="strat-card" id="flowCard"></div>
     <div class="strat-card" id="riptideCard"></div>
     <div class="strat-card" id="thetaCard"></div>
+    <div class="strat-card" id="yoloCard"></div>
   </div>
 
   <!-- Position Tabs -->
@@ -110,12 +111,14 @@
     <div class="tab active" data-tab="flow">🐋 Flow</div>
     <div class="tab" data-tab="riptide">🌊 Riptide</div>
     <div class="tab" data-tab="theta">⏳ Theta</div>
+    <div class="tab" data-tab="yolo">🎲 Yolo</div>
     <div class="tab" data-tab="log">📋 Trade Log</div>
   </div>
 
   <div id="tab-flow" class="tab-content active"></div>
   <div id="tab-riptide" class="tab-content"></div>
   <div id="tab-theta" class="tab-content"></div>
+  <div id="tab-yolo" class="tab-content"></div>
   <div id="tab-log" class="tab-content"></div>
 </div>
 
@@ -278,7 +281,71 @@ function renderThetaTable(state) {
   $('tab-theta').innerHTML = html;
 }
 
-function renderTradeLog(flow, riptide, theta) {
+function renderYoloTable(state) {
+  let html = '';
+
+  // Delta stats banner
+  if (state.deltaStats) {
+    const ds = state.deltaStats;
+    const deltaColor = ds.avgDelta >= 0 ? 'neg' : 'pos'; // positive delta = overpaying = bad
+    html += `<div class="card" style="margin-top:16px;margin-bottom:16px;border-color:var(--border)">
+      <div class="label">Price Delta (Alert → Entry)</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:8px">
+        <div><div class="label">Avg Δ</div><div class="${deltaColor}">$${ds.avgDelta.toFixed(2)} (${ds.avgDeltaPct >= 0 ? '+' : ''}${ds.avgDeltaPct.toFixed(1)}%)</div></div>
+        <div><div class="label">Avg Delay</div><div>${ds.avgDelaySec.toFixed(0)}s</div></div>
+        <div><div class="label">Total Slippage</div><div class="${ds.totalSlippage >= 0 ? 'neg' : 'pos'}">${pnl(ds.totalSlippage)}</div></div>
+        <div><div class="label">Samples</div><div>${ds.samples}</div></div>
+      </div>
+    </div>`;
+  }
+
+  if (state.openPositions?.length) {
+    html += `<div class="section-title">Open Positions (${state.openPositions.length})</div><div class="table-wrap"><table>
+      <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Expiry</th><th>Entry</th><th>Current</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>Δ Alert</th><th>Held</th><th>θ Exit</th></tr>`;
+    for (const p of state.openPositions) {
+      const held = Math.round((Date.now() - new Date(p.entryDate).getTime()) / 86400000);
+      const upnl = p.unrealizedPnl || 0;
+      const upct = p.entryPrice > 0 ? ((p.currentPrice || p.entryPrice) - p.entryPrice) / p.entryPrice * 100 : 0;
+      const typeLabel = p.type === 'call' ? '<span style="color:var(--green)">CALL</span>' : '<span style="color:var(--red)">PUT</span>';
+      const deltaStr = p.priceDelta !== null && p.priceDelta !== undefined
+        ? `<span class="${p.priceDelta > 0 ? 'neg' : 'pos'}">$${p.priceDelta.toFixed(2)}</span>`
+        : '—';
+      html += `<tr>
+        <td><strong>${p.ticker}</strong></td><td>${typeLabel}</td><td>$${p.strike}</td><td>${p.expiry}</td>
+        <td>$${p.entryPrice?.toFixed(2)}</td><td>$${(p.currentPrice||p.entryPrice).toFixed(2)}</td>
+        <td>${p.contracts}</td>
+        <td class="${pnlClass(upnl)}">${pnl(upnl)}</td><td class="${pnlClass(upct)}">${pct(upct)}</td>
+        <td>${p.entryIv ? (p.entryIv*100).toFixed(0)+'%' : '—'}</td><td>${deltaStr}</td>
+        <td>${held}d</td><td>${p.thetaExitDate||'—'}</td>
+      </tr>`;
+    }
+    html += '</table></div>';
+  } else {
+    html += '<div class="section-title">No open positions — Yolo is scanning</div>';
+  }
+
+  if (state.closedPositions?.length) {
+    html += `<div class="section-title">Closed Positions (${state.closedPositions.length})</div><div class="table-wrap"><table>
+      <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Entry</th><th>Exit</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>Δ Alert</th><th>Hold</th><th>Reason</th></tr>`;
+    for (const p of [...state.closedPositions].reverse()) {
+      const typeLabel = p.type === 'call' ? '<span style="color:var(--green)">CALL</span>' : '<span style="color:var(--red)">PUT</span>';
+      const deltaStr = p.priceDelta !== null && p.priceDelta !== undefined
+        ? `<span class="${p.priceDelta > 0 ? 'neg' : 'pos'}">$${p.priceDelta.toFixed(2)}</span>`
+        : '—';
+      html += `<tr>
+        <td><strong>${p.ticker}</strong></td><td>${typeLabel}</td><td>$${p.strike}</td>
+        <td>$${p.entryPrice?.toFixed(2)}</td><td>$${p.exitPrice?.toFixed(2)}</td><td>${p.contracts}</td>
+        <td class="${pnlClass(p.pnl)}">${pnl(p.pnl)}</td><td class="${pnlClass(p.pnlPct)}">${pct(p.pnlPct)}</td>
+        <td>${p.entryIv ? (p.entryIv*100).toFixed(0)+'%' : '—'}</td><td>${deltaStr}</td>
+        <td>${p.holdDays}d</td><td>${(p.exitReason||'').split(' ')[0]}</td>
+      </tr>`;
+    }
+    html += '</table></div>';
+  }
+  $('tab-yolo').innerHTML = html;
+}
+
+function renderTradeLog(flow, riptide, theta, yolo) {
   const trades = [];
   for (const p of (flow?.closedPositions || [])) {
     trades.push({ date: p.exitDate, time: p.exitTime, strat: '🐋 Flow', ticker: p.ticker, action: 'EXIT', detail: `${p.type?.toUpperCase()} $${p.strike}`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').split(' ')[0] });
@@ -289,6 +356,10 @@ function renderTradeLog(flow, riptide, theta) {
   }
   for (const p of (theta?.closedPositions || [])) {
     trades.push({ date: p.exitDate, time: p.exitTime, strat: '⏳ Theta', ticker: p.ticker, action: 'EXIT', detail: `IC ${p.shortCall?.strike}C/${p.shortPut?.strike}P`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').replace(/\(.*\)/, '').trim() });
+  }
+  for (const p of (yolo?.closedPositions || [])) {
+    const t = p.type === 'call' ? 'C' : 'P';
+    trades.push({ date: p.exitDate, time: p.exitTime, strat: '🎲 Yolo', ticker: p.ticker, action: 'EXIT', detail: `${p.strike}${t} long`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').split(' ')[0] });
   }
   trades.sort((a, b) => (b.time || b.date || '').localeCompare(a.time || a.date || ''));
 
@@ -307,11 +378,12 @@ function renderTradeLog(flow, riptide, theta) {
 
 async function refresh() {
   try {
-    const [summary, flow, riptide, theta] = await Promise.all([
+    const [summary, flow, riptide, theta, yolo] = await Promise.all([
       fetch('/api/summary').then(r => r.json()),
       fetch('/api/flow').then(r => r.json()),
       fetch('/api/riptide').then(r => r.json()),
       fetch('/api/theta').then(r => r.json()),
+      fetch('/api/yolo').then(r => r.json()),
     ]);
 
     const c = summary.combined;
@@ -334,11 +406,13 @@ async function refresh() {
     renderStratCard($('flowCard'), 'Flow', '🐋', summary.flow);
     renderStratCard($('riptideCard'), 'Riptide', '🌊', summary.riptide);
     renderStratCard($('thetaCard'), 'Theta', '⏳', summary.theta);
+    renderStratCard($('yoloCard'), 'Yolo', '🎲', summary.yolo);
 
     renderFlowTable(flow);
     renderRiptideTable(riptide);
     renderThetaTable(theta);
-    renderTradeLog(flow, riptide, theta);
+    renderYoloTable(yolo);
+    renderTradeLog(flow, riptide, theta, yolo);
 
     $('lastUpdate').textContent = new Date().toLocaleTimeString();
     if (summary.epoch) {
