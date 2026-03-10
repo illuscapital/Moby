@@ -9,6 +9,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 const API_TOKEN = process.env.UW_API_TOKEN;
 if (!API_TOKEN) { console.error('Missing UW_API_TOKEN env var'); process.exit(1); }
 const DATA_DIR = path.join(__dirname, 'data');
@@ -22,8 +23,8 @@ const PARAMS = {
   minVolOiRatio: 3,
   maxDte: 90,
   minDte: 5,
-  minOtmPct: 0,
-  maxOtmPct: 15,
+  minOtmPct: 10,
+  maxOtmPct: 30,
   requireEarnings: false,
   earningsWindowDays: 10,
   excludeIndexes: true,
@@ -36,8 +37,11 @@ const PARAMS = {
   minEntryIv: 0.60,               // need ≥ 60% IV for enough premium to sell
   // No max IV — the higher the better for selling premium
   minIvPctl: 0.70,                 // only sell premium when IV is historically elevated (70th+ pctl)
+  minOtmPctRiptide: 10,           // short strike must be ≥ 10% OTM (high-gamma filter)
+  earningsExclusionDays: 14,      // skip tickers with earnings within 14 days of entry
 
   // Spread construction
+  minCreditPerContract: 1.50,      // minimum $1.50 credit/contract — eliminates bad R/R trades
   minCreditWidthPct: 0.25,         // credit must be ≥ 25% of spread width (risk/reward gate)
   spreadWidthByStrike: [           // dynamic spread width
     { maxStrike: 50, width: 2.50 },
@@ -51,7 +55,7 @@ const PARAMS = {
 
   // Exit rules
   profitTakePct: 50,               // close at 50% of max credit received
-  stopLossMultiple: 2,             // close if spread cost hits 2x credit (100% loss)
+  stopLossMultiple: 3,             // close if spread cost hits 3x credit (200% loss)
   dteFloor: 7,                     // exit at ≤ 7 DTE — gamma risk ramps exponentially last week
   timeDecayStopPct: 50,            // exit if 50% of time elapsed and P&L is negative
   moneynessExitPct: 2,             // exit if underlying within 2% of short strike
@@ -260,6 +264,14 @@ function filterAlert(alert) {
       : ((strike - underlying) / underlying) * 100;  // call OTM: strike above underlying
     if (otmPct < PARAMS.minOtmPct || otmPct > PARAMS.maxOtmPct) return { pass: false };
   } else return { pass: false };
+
+  // Earnings exclusion: skip if ER within N days (too risky to sell premium into)
+  if (alert.next_earnings_date && PARAMS.earningsExclusionDays > 0) {
+    const erBdays = tradingDaysBetween(new Date(), new Date(alert.next_earnings_date));
+    if (erBdays >= 0 && erBdays <= PARAMS.earningsExclusionDays) {
+      return { pass: false };
+    }
+  }
 
   if (PARAMS.requireEarnings) {
     if (!alert.next_earnings_date) return { pass: false };
@@ -516,6 +528,12 @@ async function run() {
 
         if (creditPerContract <= 0.05) {
           console.log(`  SKIP (credit too small: $${creditPerContract.toFixed(2)}): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike}/${protectionStrike} ${sig.expiry}`);
+          continue;
+        }
+
+        // Minimum credit per contract — eliminates bad risk/reward trades
+        if (creditPerContract < PARAMS.minCreditPerContract) {
+          console.log(`  SKIP (credit $${creditPerContract.toFixed(2)} < min $${PARAMS.minCreditPerContract.toFixed(2)}): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike}/${protectionStrike} ${sig.expiry}`);
           continue;
         }
 

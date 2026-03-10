@@ -6,6 +6,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 const API_TOKEN = process.env.UW_API_TOKEN;
 if (!API_TOKEN) { console.error('Missing UW_API_TOKEN env var'); process.exit(1); }
 const DATA_DIR = path.join(__dirname, 'data');
