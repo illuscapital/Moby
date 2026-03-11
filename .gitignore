@@ -1,11 +1,12 @@
-# Data & state (runtime, not code)
+
+dashboard/dashboard.log
 data/
-*.jsonl
-
-# Environment
+# Data & state (runtime, not code)
 .env
+# Environment
+*.jsonl
+logs/
 node_modules/
-
 # Temp
-/tmp/
 *.tmp
+/tmp/

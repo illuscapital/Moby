@@ -70,7 +70,10 @@
 
 <div class="header">
   <h1><span>🐋</span> Moby Dashboard</h1>
-  <div class="meta"><span class="refresh-dot"></span>Auto-refresh 30s &mdash; <span id="lastUpdate">—</span><span id="epochBadge"></span></div>
+  <div class="meta">
+    <label style="margin-right:16px;cursor:pointer;"><input type="checkbox" id="ivFilter" style="margin-right:4px;cursor:pointer;">Exclude IV &gt; 80%</label>
+    <span class="refresh-dot"></span>Auto-refresh 30s &mdash; <span id="lastUpdate">—</span><span id="epochBadge"></span>
+  </div>
 </div>
 
 <div class="container">
@@ -137,6 +140,29 @@ document.querySelectorAll('.tab').forEach(tab => {
     $(`tab-${tab.dataset.tab}`).classList.add('active');
   });
 });
+
+// IV filter — persist in localStorage, re-render on toggle
+const ivCheckbox = $('ivFilter');
+ivCheckbox.checked = localStorage.getItem('moby_iv_filter') === 'true';
+ivCheckbox.addEventListener('change', () => {
+  localStorage.setItem('moby_iv_filter', ivCheckbox.checked);
+  refresh();
+});
+
+function filterByIv(positions) {
+  if (!ivCheckbox.checked) return positions || [];
+  return (positions || []).filter(p => !p.entryIv || p.entryIv <= 0.80);
+}
+
+function recomputeStats(open, closed) {
+  let wins = 0, losses = 0, totalPnl = 0, unrealized = 0;
+  for (const p of closed) {
+    totalPnl += p.pnl || 0;
+    if ((p.pnl || 0) > 0) wins++; else if ((p.pnl || 0) < 0) losses++;
+  }
+  for (const p of open) unrealized += p.unrealizedPnl || 0;
+  return { totalPnl, wins, losses, totalTrades: closed.length, openCount: open.length, unrealized };
+}
 
 function renderStratCard(el, name, emoji, stats) {
   const wr = (stats.wins + stats.losses) > 0 ? ((stats.wins / (stats.wins + stats.losses)) * 100).toFixed(1) : '—';
@@ -386,7 +412,31 @@ async function refresh() {
       fetch('/api/yolo').then(r => r.json()),
     ]);
 
-    const c = summary.combined;
+    // Apply IV filter to all strategies
+    flow.openPositions = filterByIv(flow.openPositions);
+    flow.closedPositions = filterByIv(flow.closedPositions);
+    riptide.openPositions = filterByIv(riptide.openPositions);
+    riptide.closedPositions = filterByIv(riptide.closedPositions);
+    theta.openPositions = filterByIv(theta.openPositions);
+    theta.closedPositions = filterByIv(theta.closedPositions);
+    yolo.openPositions = filterByIv(yolo.openPositions);
+    yolo.closedPositions = filterByIv(yolo.closedPositions);
+
+    // Recompute stats from filtered data
+    const flowStats = recomputeStats(flow.openPositions, flow.closedPositions);
+    const riptideStats = recomputeStats(riptide.openPositions, riptide.closedPositions);
+    const thetaStats = recomputeStats(theta.openPositions, theta.closedPositions);
+    const yoloStats = recomputeStats(yolo.openPositions, yolo.closedPositions);
+
+    const c = {
+      totalPnl: flowStats.totalPnl + riptideStats.totalPnl + thetaStats.totalPnl + yoloStats.totalPnl,
+      totalUnrealized: flowStats.unrealized + riptideStats.unrealized + thetaStats.unrealized + yoloStats.unrealized,
+      totalTrades: flowStats.totalTrades + riptideStats.totalTrades + thetaStats.totalTrades + yoloStats.totalTrades,
+      openPositions: flowStats.openCount + riptideStats.openCount + thetaStats.openCount + yoloStats.openCount,
+      wins: flowStats.wins + riptideStats.wins + thetaStats.wins + yoloStats.wins,
+      losses: flowStats.losses + riptideStats.losses + thetaStats.losses + yoloStats.losses,
+    };
+
     $('totalPnl').className = `value ${pnlClass(c.totalPnl)}`;
     $('totalPnl').textContent = pnl(c.totalPnl);
     $('totalTrades').textContent = `${c.totalTrades} closed trades`;
@@ -403,10 +453,10 @@ async function refresh() {
     $('combinedPnl').className = `value ${pnlClass(combined)}`;
     $('combinedPnl').textContent = pnl(combined);
 
-    renderStratCard($('flowCard'), 'Flow', '🐋', summary.flow);
-    renderStratCard($('riptideCard'), 'Riptide', '🌊', summary.riptide);
-    renderStratCard($('thetaCard'), 'Theta', '⏳', summary.theta);
-    renderStratCard($('yoloCard'), 'Yolo', '🎲', summary.yolo);
+    renderStratCard($('flowCard'), 'Flow', '🐋', flowStats);
+    renderStratCard($('riptideCard'), 'Riptide', '🌊', riptideStats);
+    renderStratCard($('thetaCard'), 'Theta', '⏳', thetaStats);
+    renderStratCard($('yoloCard'), 'Yolo', '🎲', yoloStats);
 
     renderFlowTable(flow);
     renderRiptideTable(riptide);

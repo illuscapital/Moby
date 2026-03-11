@@ -1,194 +1,307 @@
-# 🐋 Moby
+# Moby
 
-Options trading bot built on [Unusual Whales](https://unusualwhales.com) data. Four complementary strategies that profit from unusual options flow in different ways.
+Options trading system built on [Unusual Whales](https://unusualwhales.com) flow data. Four complementary strategies that exploit options mispricing around earnings, IV crush, and whale activity.
 
-## Strategies
-
-### 🐋 Flow — Directional Earnings Bets
-
-Follows unusual options flow into earnings. When smart money makes large, directional bets before an earnings release, Moby follows.
-
-**Entry Filters:**
-- Premium ≥ $200K
-- Volume/OI ≥ 5x (unusual size)
-- DTE: 5–45 days
-- OTM: 2–15%
-- IV: 15–80% (skip NO_DATA, avoid extreme IV crush)
-- Earnings within 10 trading days
-- Ask-side ≥ 70% (directional conviction)
-- Single-leg, common stock only
-
-**Position Sizing:** $5K max per position, 10 max open
-
-**Exit Rules:**
-- No stop losses — position sizing is the risk control
-- Profit-take at +175%
-- Exit at first market open after earnings (BMO → same day, AMC → next day)
-- Pre-expiry exit at ≤ 3 DTE if earnings are after expiry
-- Emergency exit at ≤ 1 DTE
-
-### 🌊 Riptide — Credit Spread Fade
-
-Sells credit spreads against unusual flow alerts. When large options activity spikes IV on a stock, Riptide fades it — collecting premium and profiting from IV crush when the stock doesn't move as much as the flow implied.
-
-**Entry Filters:**
-- Premium ≥ $100K
-- Puts and calls — sells bull put spreads or bear call spreads depending on flow direction
-- Sweeps allowed — high IV = more premium, exit logic protects
-- IV ≥ 60% (need enough inflated premium to sell — no ceiling)
-- IV percentile ≥ 70th (only sell when IV is historically elevated)
-- DTE: 5–90 days, Vol/OI ≥ 3x
-- OTM: 10–30% (short strike must be ≥ 10% out-of-the-money)
-- Min credit: $1.50/contract (eliminates bad risk/reward trades)
-- Earnings exclusion: skip if ER within 14 days (avoid vol events)
-- Credit ≥ 25% of spread width (risk/reward gate)
-- Ask-side ≥ 70%, single-leg, no indexes
-
-**Spread Structure:**
-- Bull put spread (bearish flow) or bear call spread (bullish flow)
-- Dynamic width: $2.50 for strikes < $50, $5.00 for strikes ≥ $50
-
-**Position Sizing:** 5% of $100K account ($5K max risk per trade), 5 max open
-
-**Exit Rules (priority order):**
-1. **Moneyness** — underlying within 2% of short strike (thesis broken)
-2. **Stop loss** — spread cost ≥ 3x credit received (hard cap)
-3. **Profit target** — captured ≥ 50% of credit (don't get greedy)
-4. **IV crush** — IV dropped ≥ 30% from entry AND position is profitable (edge is gone)
-5. **Time decay stop** — 50%+ of time elapsed and P&L is negative (cut losers)
-6. **Earnings proximity** — ≤ 2 trading days before ER if one exists (gap risk)
-7. **DTE floor** — ≤ 7 DTE (gamma risk too high for credit spreads)
-
-### 🐋⏳ Theta — Earnings Premium Selling
-
-Sells iron condors on earnings stocks where Flow has no directional signal. Profits from IV crush when the stock stays in range.
-
-**Entry Filters:**
-- IV rank > 50% (elevated premium to sell)
-- Earnings within 0–3 trading days
-- No position conflict with Flow strategy
-- Liquid chains (bid-ask spread < 15%)
-
-**Condor Structure:**
-- Short strikes ~8% OTM each side
-- Wings $5 or 3% further out (whichever is greater)
-- Defined risk on both sides
-
-**Position Sizing:** $2.5K max risk per condor, 5 max open
-
-**Exit Rules:**
-- Close at first market open after earnings
-- Profit target: 50% of max credit
-- Stop loss: 200% of credit received
-
-### 🎲 Yolo — Follow the Whales
-
-Goes WITH unusual options flow — buys the same option the whales are buying. Naked long options with tight risk management.
-
-**Entry Filters:**
-- Premium ≥ $100K
-- Volume/OI ≥ 3x
-- DTE: 5–90 days
-- OTM: 10–30%
-- IV percentile ≥ 50th
-- Ask-side ≥ 70% (directional conviction)
-- Single-leg, common stock only, no indexes
-- Dark pool confirmation: ≥ 5 recent prints, ≥ $1M notional
-
-**Position Sizing:** $5K max per position, 5 max open
-
-**Exit Rules (priority order):**
-1. **Trailing stop** — exits if price drops 15% from peak (only activates when in profit, no hard profit cap — let winners run)
-2. **Stop loss** — exits at -10% loss (tight, cut losers fast)
-3. **Theta guard** — exits after 2/3 of calendar days elapsed (time decay protection)
-
-**Price Delta Tracking:** Measures slippage between whale's alert-time price and Moby's entry price. Negative delta = buying cheaper than the whale (good).
-
-**Exit Monitor:** Standalone process (`yolo-exit-monitor.js`) polls option prices every 90 seconds during market hours. No LLM needed — pure price checks. Runs independently of the cron-based entry scanner.
+**Status: Paper trading.** All positions are simulated. No broker integration.
 
 ## Architecture
 
 ```
+                         Unusual Whales API
+                               │
+                ┌──────────────┼──────────────┐
+                │              │              │
+                ▼              ▼              ▼
+         flow-alerts     screener      option-contracts
+                │              │              │
+                └──────┬───────┘              │
+                       │                      │
+               ┌───────▼────────┐    ┌────────▼────────┐
+               │   scanner.js   │    │ exit-monitor.js  │
+               │  (entries)     │    │  (exits)         │
+               │  polls 90s     │    │  polls 90s       │
+               │                │    │                  │
+               │  Flow          │    │  Flow exits      │
+               │  Riptide       │    │  Riptide exits   │
+               │  Yolo          │    │  Theta exits     │
+               │  Theta (30min) │    │  Yolo exits      │
+               └───────┬────────┘    └────────┬────────┘
+                       │                      │
+            ┌──────────┼──────────┐    ┌──────┼──────────┐
+            ▼          ▼          ▼    ▼      ▼          ▼
+       state.json  trades.jsonl  seen  state  trades   prices
+            │          │                │      │
+            └──────────┼────────────────┘      │
+                       ▼                       │
+              ┌────────────────┐               │
+              │ dashboard/     │◄──────────────┘
+              │ server.js      │  (read-only)
+              │ :3200          │
+              └────────────────┘
+```
+
+### Two Persistent Processes
+
+**`scanner.js`** — Entry system. Polls UW flow alerts every 90 seconds (configurable via `SCANNER_POLL_INTERVAL_MS`). Deduplicates alerts, archives to daily JSONL files, enriches tickers with IV percentile and dark pool data, then runs each new alert through Flow, Riptide, and Yolo entry filters. Theta runs on a separate 30-minute schedule within the same process (earnings-based, not flow-based). Screener collection and enrichment also run every 30 minutes. All entries tagged with `entrySource: 'scanner'`.
+
+**`exit-monitor.js`** — Exit system. Polls option prices every 90 seconds for all open positions across all 4 strategies. Performs mark-to-market valuation and checks each strategy's exit rules. Only runs during market hours (9:30 AM – 4:00 PM ET). Exits blocked before 10:00 AM ET (30-minute opening buffer). All exits tagged with `exitSource: 'exit-monitor'`.
+
+**Dashboard** (`dashboard/server.js`) — Read-only Express server on port 3200. Reads state files for open positions and JSONL trade logs for closed positions. Never mutates data.
+
+### Data Flow
+
+- JSONL trade logs are the **source of truth** for closed positions (append-only, crash-safe)
+- State JSON files hold open positions, seen alert IDs, and running stats
+- Each strategy has its own state file and trade log
+- Dashboard computes all KPIs from JSONL at request time
+
+### Legacy Strategy Files
+
+The individual strategy `.js` files (`strategy.js`, `riptide-strategy.js`, `theta-strategy.js`, `yolo-strategy.js`) contain the original entry + exit logic used by the cron-based system. They still work as standalone scripts but are now backup only — `scanner.js` and `exit-monitor.js` have absorbed all entry and exit logic respectively. Similarly, `collector.js` (data collection) is now handled by `scanner.js`.
+
+## Strategies
+
+### Flow — Pre-Earnings Directional
+
+Buy naked long options on stocks with unusual flow ahead of earnings.
+
+| Parameter | Value |
+|---|---|
+| Min premium | $200,000 |
+| Min vol/OI ratio | 5x |
+| DTE range | 5–45 |
+| OTM range | 2–15% |
+| IV range | 15–80% |
+| Earnings window | Within 10 trading days |
+| Require single-leg | Yes |
+| Min ask-side premium | 70% |
+| Exclude indexes | Yes (SPX, SPXW, SPY, QQQ, IWM, DIA, XSP, VIX, NDX, RUT) |
+| Position size | $5,000 per trade (1.5x with dark pool confirmation) |
+| Max open positions | 10 |
+
+**Dark pool confirmation:** If ticker has ≥ 50 recent prints and ≥ $1M notional, position size scales to 1.5x ($7,500).
+
+**Exit rules:**
+
+| Rule | Trigger |
+|---|---|
+| Profit take | +175% unrealized gain |
+| Earnings BMO | Exit at open on ER day |
+| Earnings AMC | Exit next business day open |
+| Pre-expiry | ER after option expiry and DTE ≤ 3 |
+| Emergency | DTE ≤ 1 |
+
+### Riptide — Credit Spread Fade
+
+Sell credit spreads against high-IV unusual flow. Inverse of Flow — profits from IV crush.
+
+| Parameter | Value |
+|---|---|
+| Min premium | $100,000 |
+| Min vol/OI ratio | 3x |
+| DTE range | 5–90 |
+| OTM range | 10–30% |
+| Min entry IV | 60% |
+| Min IV percentile | 70th |
+| Earnings exclusion | Skip if ER within 14 trading days |
+| Allowed types | Puts and calls |
+| Spread width | $2.50 (strike ≤ $50), $5.00 (strike > $50) |
+| Min credit/contract | $1.50 |
+| Min credit/width ratio | 25% |
+| Account size / max risk | $100,000 / 5% per trade ($5,000) |
+| Max open positions | 5 |
+
+**Exit rules (priority order):**
+
+| # | Rule | Trigger |
+|---|---|---|
+| 1 | Moneyness | Underlying within 2% of short strike |
+| 2 | Stop loss | Spread cost ≥ 3x credit received |
+| 3 | Profit take | 50% of credit captured |
+| 4 | IV crush | IV dropped ≥ 30% from entry (and profitable) |
+| 5 | Time decay stop | 50%+ time elapsed and still losing |
+| 6 | Earnings proximity | ≤ 2 trading days before ER |
+| 7 | DTE floor | ≤ 7 DTE |
+
+### Theta — Earnings Iron Condors
+
+Sell iron condors around earnings when IV is elevated and no strong directional flow exists.
+
+| Parameter | Value |
+|---|---|
+| Min IV rank | 50% |
+| Max bid/ask spread | 15% on short strikes |
+| Earnings window | 0–3 trading days before ER |
+| Short strike OTM | ~8% each side |
+| Wing width | $5 or 3% of stock price (whichever is greater) |
+| Max risk per trade | $2,500 |
+| Max open positions | 5 |
+| Exclude indexes | Yes |
+| Skip if Flow has position | Yes |
+
+**Entry:** Runs on a 30-minute schedule within `scanner.js`. Scans UW screener for stocks with upcoming earnings, checks IV rank ≥ 50%, builds iron condor from option chain.
+
+**Exit rules:**
+
+| Rule | Trigger |
+|---|---|
+| Profit take | 50% of max credit captured |
+| Stop loss | Loss ≥ 200% of credit received |
+| Post-earnings | Exit on ER day (BMO) or next business day (AMC) |
+
+### Yolo — Follow the Whales
+
+Buy the same option the whales are buying. Naked long, momentum-driven.
+
+| Parameter | Value |
+|---|---|
+| Min premium | $100,000 |
+| Min vol/OI ratio | 3x |
+| DTE range | 5–90 |
+| OTM range | 10–30% |
+| Min entry IV | 60% |
+| Min IV percentile | 70th |
+| Earnings exclusion | Skip if ER within 14 trading days |
+| Max entry delta | $0.10 above alert ask price |
+| Position size | $5,000 per trade |
+| Max open positions | 10 |
+| Theta guard fraction | 2/3 of calendar days to expiry |
+
+**Exit rules:**
+
+| # | Rule | Trigger |
+|---|---|---|
+| 1 | Trailing stop | 15% drop from peak price (only when in profit) |
+| 2 | Stop loss | -10% from entry |
+| 3 | Theta guard | 2/3 of calendar days elapsed |
+
+No hard profit cap — let winners run, trailing stop locks in gains.
+
+## File Structure
+
+```
 Moby/
-├── .env                    — API tokens (gitignored)
-├── collector.js            — Fetches UW flow alerts + screener data every 30min
-├── strategy.js             — Flow strategy: filters, entries, exits, mark-to-market
-├── riptide-strategy.js     — Riptide strategy: credit spread fades against flow alerts
-├── theta-strategy.js       — Theta strategy: iron condor construction + management
-├── yolo-strategy.js        — Yolo strategy: follow whale flow, long options
-├── yolo-exit-monitor.js    — Standalone exit monitor (90s polling, no LLM)
-├── report/
-│   ├── render-report.js    — Generates combined Flow + Theta HTML report
-│   ├── render-theta-report.js — Generates Theta-only HTML report
-│   ├── render-ascii.js     — Generates fixed-width text report (webchat)
-│   ├── report-template.html — HTML template for report images
-│   └── send-report.sh     — CLI pipeline: render → screenshot → Signal
-├── scripts/
-│   └── flow-alert.js      — Standalone flow alert scanner with file-based dedup
-├── data/                   — Runtime state (gitignored)
-│   ├── strategy-state.json — Flow open positions + seen alerts
-│   ├── theta-state.json   — Theta open positions
-│   ├── riptide-state.json — Riptide open positions
-│   ├── yolo-state.json    — Yolo open positions + peak prices
-│   ├── trades.jsonl       — Flow trade log (source of truth for closed positions)
-│   ├── riptide-trades.jsonl — Riptide trade log (source of truth)
-│   ├── theta-trades.jsonl — Theta trade log (source of truth)
-│   ├── yolo-trades.jsonl  — Yolo trade log (source of truth)
-│   ├── yolo-exit-monitor.log — Exit monitor log
-│   ├── flow-YYYY-MM-DD.jsonl    — Daily flow alert archives
-│   └── screener-YYYY-MM-DD.jsonl — Daily screener archives
+├── scanner.js              # Entry system — persistent process, polls every 90s
+├── exit-monitor.js         # Exit system — persistent process, polls every 90s
+├── strategy.js             # Flow strategy (legacy standalone, backup only)
+├── riptide-strategy.js     # Riptide strategy (legacy standalone, backup only)
+├── theta-strategy.js       # Theta strategy (legacy standalone, backup only)
+├── yolo-strategy.js        # Yolo strategy (legacy standalone, backup only)
+├── collector.js            # Legacy data collector (absorbed into scanner.js)
 ├── dashboard/
-│   ├── server.js          — Express API server (port 3200)
-│   └── index.html         — Single-page dashboard UI
-├── .githooks/
-│   └── pre-commit         — Blocks commits containing secrets
-└── .env.example
+│   ├── server.js           # Express API server (port 3200)
+│   └── index.html          # Dashboard frontend (dark theme, auto-refresh 30s)
+├── scripts/
+│   └── flow-alert.js       # Standalone flow alert notifier (Signal messages)
+├── report/
+│   ├── render-ascii.js     # ASCII position table for Flow
+│   ├── render-report.js    # HTML report renderer
+│   ├── render-theta-report.js  # Theta-specific report
+│   ├── report-template.html    # HTML report template
+│   └── send-report.sh     # Report delivery script
+├── data/                   # Runtime data (gitignored)
+│   ├── strategy-state.json     # Flow open positions + stats
+│   ├── riptide-state.json      # Riptide open positions + stats
+│   ├── theta-state.json        # Theta open positions + stats
+│   ├── yolo-state.json         # Yolo open positions + stats
+│   ├── trades.jsonl            # Flow trade log (source of truth)
+│   ├── riptide-trades.jsonl    # Riptide trade log
+│   ├── theta-trades.jsonl      # Theta trade log
+│   ├── yolo-trades.jsonl       # Yolo trade log
+│   ├── flow-YYYY-MM-DD.jsonl   # Daily archived flow alerts
+│   ├── screener-YYYY-MM-DD.jsonl  # Daily screener snapshots
+│   ├── seen-flow-alerts.json   # Deduplication state (pruned to 7-day window)
+│   ├── enrichment-cache.json   # IV percentile + dark pool cache (30min TTL)
+│   ├── scanner.log             # Scanner process log
+│   └── exit-monitor.log        # Exit monitor process log
+├── .env                    # API tokens and config (gitignored)
+├── package.json
+└── package-lock.json
 ```
 
 ## Running
 
-### Entry Scanner (cron)
+### Environment Variables
 
-Runs via OpenClaw cron every 30min during market hours (9am–4pm ET, weekdays):
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `UW_API_TOKEN` | Yes | — | Unusual Whales API bearer token |
+| `SIGNAL_TARGET_UUID` | No | — | Signal messenger target UUID for trade notifications |
+| `SCANNER_POLL_INTERVAL_MS` | No | `90000` | Scanner poll interval in ms |
+| `MOBY_DASH_PORT` | No | `3200` | Dashboard server port |
+| `MOBY_EPOCH` | No | — | ISO date — only show positions entered on/after this date |
 
-```bash
-node collector.js && node strategy.js && node theta-strategy.js && node riptide-strategy.js && node yolo-strategy.js
-```
-
-### Yolo Exit Monitor (persistent)
-
-Standalone process — polls prices every 90s, exits based on stop/trailing rules:
-
-```bash
-cd Moby && setsid nohup node yolo-exit-monitor.js >> data/yolo-exit-monitor.log 2>&1 &
-```
-
-Stop: `pkill -f "yolo-exit-monitor.js"`
-
-### Dashboard
+### Install
 
 ```bash
-cd Moby && setsid nohup node dashboard/server.js >> dashboard/dashboard.log 2>&1 &
-# → http://localhost:3200
+npm install
 ```
 
-Stop: `pkill -f "Moby/dashboard/server.js"`
+Dependencies: `dotenv`, `express`. All API calls use Node.js built-in `https`.
 
-Auto-refreshes every 30 seconds. Shows combined P&L across all four strategies with tabbed views for Flow, Riptide, Theta, and Yolo positions.
+### Start Scanner (entries)
 
-## Environment Variables
-
-All stored in `.env` (loaded via dotenv):
-
+```bash
+cd Moby && nohup setsid node scanner.js </dev/null >> data/scanner.log 2>&1 &
 ```
-UW_API_TOKEN=         # Unusual Whales API token (required)
-SIGNAL_TARGET_UUID=   # Signal recipient UUID for notifications (optional)
+
+### Start Exit Monitor (exits)
+
+```bash
+cd Moby && setsid nohup node exit-monitor.js >> data/exit-monitor.log 2>&1 &
 ```
+
+### Start Dashboard
+
+```bash
+node dashboard/server.js
+# or
+npm run dashboard
+```
+
+Dashboard at `http://localhost:3200`. Auto-refreshes every 30 seconds.
+
+### Stop Processes
+
+```bash
+pkill -f "scanner.js"
+pkill -f "exit-monitor.js"
+```
+
+## Data Files
+
+| File | Format | Contents |
+|---|---|---|
+| `*-state.json` | JSON | Open positions, closed positions (convenience copy), seen alert IDs, running stats |
+| `*-trades.jsonl` | JSONL | Append-only trade log. Each line: `{action: 'OPEN'|'CLOSE', ...position, timestamp}`. Source of truth for P&L. |
+| `flow-YYYY-MM-DD.jsonl` | JSONL | Raw flow alerts from UW API, deduplicated by alert ID |
+| `screener-YYYY-MM-DD.jsonl` | JSONL | Option screener snapshots, collected every 30 minutes |
+| `enrichment-cache.json` | JSON | Per-ticker IV percentile (`_ivPctl`), dark pool stats (`_dpPrintCount`, `_dpRecentNotional`). 30-minute TTL. |
+| `seen-flow-alerts.json` | JSON | Alert deduplication map (`alertId → date`). Pruned to 7-day window. |
+
+## Reports
+
+```bash
+# Flow positions — ASCII table
+node report/render-ascii.js
+
+# HTML reports
+node report/render-report.js
+node report/render-theta-report.js
+```
+
+## Dashboard API
+
+Read-only JSON endpoints:
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/flow` | Flow open/closed positions and stats |
+| `GET /api/riptide` | Riptide open/closed positions and stats |
+| `GET /api/theta` | Theta open/closed positions and stats |
+| `GET /api/yolo` | Yolo open/closed positions, delta stats |
+| `GET /api/summary` | Combined KPIs across all 4 strategies |
 
 ## Status
 
-**Paper trading** — collecting data since Feb 16, 2026. No real money at risk.
-
-## License
-
-Private — illuscapital
+Paper trading — no real money at risk. Not deployed to production.

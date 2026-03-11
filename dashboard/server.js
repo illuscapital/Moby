@@ -60,10 +60,9 @@ function passesEpochFilter(p) {
   return entryMs >= EPOCH_MS;
 }
 
-// IV filter: exclude NO_DATA and IV > 80% (matches strategy.js PARAMS)
-const MAX_IV = 0.80;
+// IV filter: show all positions regardless of IV
 function passesIvFilter(p) {
-  return p.entryIv && p.entryIv > 0 && p.entryIv <= MAX_IV;
+  return true;
 }
 
 /** Compute stats from an array of closed positions */
