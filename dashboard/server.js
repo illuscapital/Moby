@@ -154,6 +154,70 @@ app.get('/api/yolo', (req, res) => {
   });
 });
 
+app.get('/api/research', (req, res) => {
+  // Load shadow state
+  const shadowFile = path.join(DATA_DIR, 'shadow-state.json');
+  let shadow = { positions: {} };
+  if (fs.existsSync(shadowFile)) {
+    try { shadow = JSON.parse(fs.readFileSync(shadowFile, 'utf8')); } catch { /* empty */ }
+  }
+
+  // Load all JSONL alerts (deduplicated)
+  const alerts = new Map();
+  const files = fs.readdirSync(DATA_DIR).filter(f => /^flow-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f));
+  for (const file of files) {
+    const lines = fs.readFileSync(path.join(DATA_DIR, file), 'utf8').trim().split('\n').filter(Boolean);
+    for (const line of lines) {
+      try {
+        const a = JSON.parse(line);
+        if (a.id) alerts.set(a.id, a);
+      } catch { /* skip */ }
+    }
+  }
+
+  // Merge: for each alert, attach shadow pricing if available
+  const results = [];
+  for (const [id, alert] of alerts) {
+    const s = shadow.positions[id] || null;
+    results.push({
+      id,
+      ticker: alert.ticker,
+      type: alert.type,
+      strike: parseFloat(alert.strike || 0),
+      expiry: alert.expiry,
+      optionSymbol: alert.option_chain,
+      premium: parseFloat(alert.total_premium || 0),
+      volOi: parseFloat(alert.volume_oi_ratio || 0),
+      iv: parseFloat(alert.iv_start || alert.iv_end || 0),
+      underlying: parseFloat(alert.underlying_price || 0),
+      earningsDate: alert.next_earnings_date || null,
+      hasEarnings: !!alert.next_earnings_date,
+      isSweep: !!alert.has_sweep,
+      isIndex: ['SPX','SPXW','SPY','QQQ','IWM','DIA','XSP','VIX','NDX','RUT'].includes(alert.ticker),
+      alertDate: (alert.created_at || '').slice(0, 10),
+      entryBid: s ? s.entryBid : parseFloat(alert.bid || 0),
+      entryAsk: s ? s.entryAsk : parseFloat(alert.ask || 0),
+      entryMid: s ? s.entryMid : 0,
+      otmPct: s ? s.alertOtmPct : 0,
+      dte: s ? s.alertDte : 0,
+      lastPrice: s ? s.lastPrice : null,
+      lastBid: s ? s.lastBid : null,
+      lastAsk: s ? s.lastAsk : null,
+      peakPrice: s ? s.peakPrice : null,
+      status: s ? s.status : 'unknown',
+      simulatedPnl: s ? s.simulatedPnl : null,
+      simulatedPnlPct: s ? s.simulatedPnlPct : null,
+      lastUpdated: s ? s.lastUpdated : null,
+    });
+  }
+
+  res.json({
+    totalAlerts: results.length,
+    shadowLastRun: shadow.lastRun || null,
+    alerts: results,
+  });
+});
+
 app.get('/api/summary', (req, res) => {
   const flow = readState('strategy-state.json');
   const riptide = readState('riptide-state.json');

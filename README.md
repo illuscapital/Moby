@@ -1,4 +1,4 @@
-# Moby
+# 🐋 Moby
 
 Options trading system built on [Unusual Whales](https://unusualwhales.com) flow data. Four complementary strategies that exploit options mispricing around earnings, IV crush, and whale activity.
 
@@ -61,7 +61,7 @@ The individual strategy `.js` files (`strategy.js`, `riptide-strategy.js`, `thet
 
 ## Strategies
 
-### Flow — Pre-Earnings Directional
+### 🐋 Flow — Pre-Earnings Directional
 
 Buy naked long options on stocks with unusual flow ahead of earnings.
 
@@ -91,7 +91,7 @@ Buy naked long options on stocks with unusual flow ahead of earnings.
 | Pre-expiry | ER after option expiry and DTE ≤ 3 |
 | Emergency | DTE ≤ 1 |
 
-### Riptide — Credit Spread Fade
+### 🌊 Riptide — Credit Spread Fade
 
 Sell credit spreads against high-IV unusual flow. Inverse of Flow — profits from IV crush.
 
@@ -123,7 +123,7 @@ Sell credit spreads against high-IV unusual flow. Inverse of Flow — profits fr
 | 6 | Earnings proximity | ≤ 2 trading days before ER |
 | 7 | DTE floor | ≤ 7 DTE |
 
-### Theta — Earnings Iron Condors
+### ⏳ Theta — Earnings Iron Condors
 
 Sell iron condors around earnings when IV is elevated and no strong directional flow exists.
 
@@ -149,7 +149,7 @@ Sell iron condors around earnings when IV is elevated and no strong directional 
 | Stop loss | Loss ≥ 200% of credit received |
 | Post-earnings | Exit on ER day (BMO) or next business day (AMC) |
 
-### Yolo — Follow the Whales
+### 🎲 Yolo — Follow the Whales
 
 Buy the same option the whales are buying. Naked long, momentum-driven.
 
