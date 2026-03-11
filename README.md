@@ -161,7 +161,7 @@ Buy the same option the whales are buying. Naked long, momentum-driven.
 | OTM range | 10–30% |
 | Min entry IV | 60% |
 | Min IV percentile | 70th |
-| Earnings exclusion | Skip if ER within 14 trading days |
+| Earnings exclusion | Skip if ER within 10 trading days |
 | Max entry delta | $0.10 above alert ask price |
 | Position size | $5,000 per trade |
 | Max open positions | 10 |

@@ -780,7 +780,7 @@ const YOLO_PARAMS = {
   skipSweeps: false,
   minEntryIv: 0.60,
   minIvPctl: 0.70,
-  earningsExclusionDays: 14,
+  earningsExclusionDays: 10,
   maxCostPerTrade: 5000,
   maxOpenPositions: 10,
   maxEntryDelta: 0.10,
@@ -1165,6 +1165,11 @@ async function runThetaScan() {
           }
         }
       }
+    }
+
+    if (!cand.underlying || cand.underlying <= 0) {
+      console.log(`${LOG_PREFIX()} [theta] SKIP (no underlying price): ${cand.ticker}`);
+      continue;
     }
 
     const condor = buildCondor(chain, cand.underlying, expiry);
