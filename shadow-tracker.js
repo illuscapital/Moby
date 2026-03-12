@@ -67,16 +67,41 @@ function fetchJson(url) {
   });
 }
 
-async function getOptionContracts(ticker) {
-  await sleep(RATE_LIMIT_MS);
-  try {
-    const url = `https://api.unusualwhales.com/api/stock/${ticker}/option-contracts`;
-    const result = await fetchJson(url);
-    return result?.data || [];
-  } catch (e) {
-    console.error(`${LOG_PREFIX()} Chain fetch failed for ${ticker}: ${e.message}`);
-    return [];
+/**
+ * Fetch option contracts for a ticker. Fetches page 1 first, then only
+ * fetches additional pages if some target option symbols are still unmatched.
+ * @param {string} ticker
+ * @param {Set<string>} [neededSymbols] - option symbols we need prices for
+ */
+async function getOptionContracts(ticker, neededSymbols) {
+  const allContracts = [];
+  const MAX_PAGES = 10;
+
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    await sleep(RATE_LIMIT_MS);
+    try {
+      const url = `https://api.unusualwhales.com/api/stock/${ticker}/option-contracts?page=${page}`;
+      const result = await fetchJson(url);
+      const data = result?.data || [];
+      if (data.length === 0) break;
+      allContracts.push(...data);
+      if (data.length < 500) break; // last page
+
+      // After page 1, only continue if we still have unmatched symbols
+      if (neededSymbols && neededSymbols.size > 0) {
+        for (const c of data) {
+          if (c.option_symbol) neededSymbols.delete(c.option_symbol);
+        }
+        if (neededSymbols.size === 0) break; // all found
+      } else if (page >= 1 && !neededSymbols) {
+        break; // no symbol list provided, just fetch page 1
+      }
+    } catch (e) {
+      console.error(`${LOG_PREFIX()} Chain fetch failed for ${ticker} page ${page}: ${e.message}`);
+      break;
+    }
   }
+  return allContracts;
 }
 
 // ─── State I/O ───
@@ -229,6 +254,7 @@ async function runCycle(state, isFirstRun) {
     if (!tickerGroups[pos.ticker]) tickerGroups[pos.ticker] = [];
     tickerGroups[pos.ticker].push(pos);
   }
+  console.log(`${LOG_PREFIX()} [shadow] Active: ${Object.values(state.positions).filter(p=>p.status==='active').length} | Expired: ${expiredCount} | Tickers to price: ${Object.keys(tickerGroups).length}`);
 
   // Fetch prices grouped by ticker
   let tickerCount = 0;
@@ -236,7 +262,14 @@ async function runCycle(state, isFirstRun) {
 
   for (const [ticker, positions] of Object.entries(tickerGroups)) {
     tickerCount++;
-    const contracts = await getOptionContracts(ticker);
+
+    // Build set of option symbols we still need (unpriced or stale)
+    const allSymbols = new Set(positions.map(p => p.optionSymbol).filter(Boolean));
+    const neededSymbols = new Set(
+      positions.filter(p => p.lastPrice === null).map(p => p.optionSymbol).filter(Boolean)
+    );
+    // Pass neededSymbols so pagination only kicks in if page 1 missed some
+    const contracts = await getOptionContracts(ticker, neededSymbols.size > 0 ? new Set(neededSymbols) : null);
     if (!contracts.length) continue;
 
     // Build lookup by option_symbol

@@ -4,61 +4,6 @@ Options trading system built on [Unusual Whales](https://unusualwhales.com) flow
 
 **Status: Paper trading.** All positions are simulated. No broker integration.
 
-## Architecture
-
-```
-                         Unusual Whales API
-                               │
-                ┌──────────────┼──────────────┐
-                │              │              │
-                ▼              ▼              ▼
-         flow-alerts     screener      option-contracts
-                │              │              │
-                └──────┬───────┘              │
-                       │                      │
-               ┌───────▼────────┐    ┌────────▼────────┐
-               │   scanner.js   │    │ exit-monitor.js  │
-               │  (entries)     │    │  (exits)         │
-               │  polls 90s     │    │  polls 90s       │
-               │                │    │                  │
-               │  Flow          │    │  Flow exits      │
-               │  Riptide       │    │  Riptide exits   │
-               │  Yolo          │    │  Theta exits     │
-               │  Theta (30min) │    │  Yolo exits      │
-               └───────┬────────┘    └────────┬────────┘
-                       │                      │
-            ┌──────────┼──────────┐    ┌──────┼──────────┐
-            ▼          ▼          ▼    ▼      ▼          ▼
-       state.json  trades.jsonl  seen  state  trades   prices
-            │          │                │      │
-            └──────────┼────────────────┘      │
-                       ▼                       │
-              ┌────────────────┐               │
-              │ dashboard/     │◄──────────────┘
-              │ server.js      │  (read-only)
-              │ :3200          │
-              └────────────────┘
-```
-
-### Two Persistent Processes
-
-**`scanner.js`** — Entry system. Polls UW flow alerts every 90 seconds (configurable via `SCANNER_POLL_INTERVAL_MS`). Deduplicates alerts, archives to daily JSONL files, enriches tickers with IV percentile and dark pool data, then runs each new alert through Flow, Riptide, and Yolo entry filters. Theta runs on a separate 30-minute schedule within the same process (earnings-based, not flow-based). Screener collection and enrichment also run every 30 minutes. All entries tagged with `entrySource: 'scanner'`.
-
-**`exit-monitor.js`** — Exit system. Polls option prices every 90 seconds for all open positions across all 4 strategies. Performs mark-to-market valuation and checks each strategy's exit rules. Only runs during market hours (9:30 AM – 4:00 PM ET). Exits blocked before 10:00 AM ET (30-minute opening buffer). All exits tagged with `exitSource: 'exit-monitor'`.
-
-**Dashboard** (`dashboard/server.js`) — Read-only Express server on port 3200. Reads state files for open positions and JSONL trade logs for closed positions. Never mutates data.
-
-### Data Flow
-
-- JSONL trade logs are the **source of truth** for closed positions (append-only, crash-safe)
-- State JSON files hold open positions, seen alert IDs, and running stats
-- Each strategy has its own state file and trade log
-- Dashboard computes all KPIs from JSONL at request time
-
-### Legacy Strategy Files
-
-The individual strategy `.js` files (`strategy.js`, `riptide-strategy.js`, `theta-strategy.js`, `yolo-strategy.js`) contain the original entry + exit logic used by the cron-based system. They still work as standalone scripts but are now backup only — `scanner.js` and `exit-monitor.js` have absorbed all entry and exit logic respectively. Similarly, `collector.js` (data collection) is now handled by `scanner.js`.
-
 ## Strategies
 
 ### 🐋 Flow — Pre-Earnings Directional
@@ -177,48 +122,6 @@ Buy the same option the whales are buying. Naked long, momentum-driven.
 
 No hard profit cap — let winners run, trailing stop locks in gains.
 
-## File Structure
-
-```
-Moby/
-├── scanner.js              # Entry system — persistent process, polls every 90s
-├── exit-monitor.js         # Exit system — persistent process, polls every 90s
-├── strategy.js             # Flow strategy (legacy standalone, backup only)
-├── riptide-strategy.js     # Riptide strategy (legacy standalone, backup only)
-├── theta-strategy.js       # Theta strategy (legacy standalone, backup only)
-├── yolo-strategy.js        # Yolo strategy (legacy standalone, backup only)
-├── collector.js            # Legacy data collector (absorbed into scanner.js)
-├── dashboard/
-│   ├── server.js           # Express API server (port 3200)
-│   └── index.html          # Dashboard frontend (dark theme, auto-refresh 30s)
-├── scripts/
-│   └── flow-alert.js       # Standalone flow alert notifier (Signal messages)
-├── report/
-│   ├── render-ascii.js     # ASCII position table for Flow
-│   ├── render-report.js    # HTML report renderer
-│   ├── render-theta-report.js  # Theta-specific report
-│   ├── report-template.html    # HTML report template
-│   └── send-report.sh     # Report delivery script
-├── data/                   # Runtime data (gitignored)
-│   ├── strategy-state.json     # Flow open positions + stats
-│   ├── riptide-state.json      # Riptide open positions + stats
-│   ├── theta-state.json        # Theta open positions + stats
-│   ├── yolo-state.json         # Yolo open positions + stats
-│   ├── trades.jsonl            # Flow trade log (source of truth)
-│   ├── riptide-trades.jsonl    # Riptide trade log
-│   ├── theta-trades.jsonl      # Theta trade log
-│   ├── yolo-trades.jsonl       # Yolo trade log
-│   ├── flow-YYYY-MM-DD.jsonl   # Daily archived flow alerts
-│   ├── screener-YYYY-MM-DD.jsonl  # Daily screener snapshots
-│   ├── seen-flow-alerts.json   # Deduplication state (pruned to 7-day window)
-│   ├── enrichment-cache.json   # IV percentile + dark pool cache (30min TTL)
-│   ├── scanner.log             # Scanner process log
-│   └── exit-monitor.log        # Exit monitor process log
-├── .env                    # API tokens and config (gitignored)
-├── package.json
-└── package-lock.json
-```
-
 ## Running
 
 ### Environment Variables
@@ -279,16 +182,60 @@ pkill -f "exit-monitor.js"
 | `enrichment-cache.json` | JSON | Per-ticker IV percentile (`_ivPctl`), dark pool stats (`_dpPrintCount`, `_dpRecentNotional`). 30-minute TTL. |
 | `seen-flow-alerts.json` | JSON | Alert deduplication map (`alertId → date`). Pruned to 7-day window. |
 
-## Reports
+## Architecture
 
-```bash
-# Flow positions — ASCII table
-node report/render-ascii.js
-
-# HTML reports
-node report/render-report.js
-node report/render-theta-report.js
 ```
+                         Unusual Whales API
+                               │
+                ┌──────────────┼──────────────┐
+                │              │              │
+                ▼              ▼              ▼
+         flow-alerts     screener      option-contracts
+                │              │              │
+                └──────┬───────┘              │
+                       │                      │
+               ┌───────▼────────┐    ┌────────▼────────┐
+               │   scanner.js   │    │ exit-monitor.js  │
+               │  (entries)     │    │  (exits)         │
+               │  polls 90s     │    │  polls 90s       │
+               │                │    │                  │
+               │  Flow          │    │  Flow exits      │
+               │  Riptide       │    │  Riptide exits   │
+               │  Yolo          │    │  Theta exits     │
+               │  Theta (30min) │    │  Yolo exits      │
+               └───────┬────────┘    └────────┬────────┘
+                       │                      │
+            ┌──────────┼──────────┐    ┌──────┼──────────┐
+            ▼          ▼          ▼    ▼      ▼          ▼
+       state.json  trades.jsonl  seen  state  trades   prices
+            │          │                │      │
+            └──────────┼────────────────┘      │
+                       ▼                       │
+              ┌────────────────┐               │
+              │ dashboard/     │◄──────────────┘
+              │ server.js      │  (read-only)
+              │ :3200          │
+              └────────────────┘
+```
+
+### Two Persistent Processes
+
+**`scanner.js`** — Entry system. Polls UW flow alerts every 90 seconds (configurable via `SCANNER_POLL_INTERVAL_MS`). Deduplicates alerts, archives to daily JSONL files, enriches tickers with IV percentile and dark pool data, then runs each new alert through Flow, Riptide, and Yolo entry filters. Theta runs on a separate 30-minute schedule within the same process (earnings-based, not flow-based). Screener collection and enrichment also run every 30 minutes. All entries tagged with `entrySource: 'scanner'`.
+
+**`exit-monitor.js`** — Exit system. Polls option prices every 90 seconds for all open positions across all 4 strategies. Performs mark-to-market valuation and checks each strategy's exit rules. Only runs during market hours (9:30 AM – 4:00 PM ET). Exits blocked before 10:00 AM ET (30-minute opening buffer). All exits tagged with `exitSource: 'exit-monitor'`.
+
+**Dashboard** (`dashboard/server.js`) — Read-only Express server on port 3200. Reads state files for open positions and JSONL trade logs for closed positions. Never mutates data.
+
+### Data Flow
+
+- JSONL trade logs are the **source of truth** for closed positions (append-only, crash-safe)
+- State JSON files hold open positions, seen alert IDs, and running stats
+- Each strategy has its own state file and trade log
+- Dashboard computes all KPIs from JSONL at request time
+
+### Legacy Strategy Files
+
+The individual strategy `.js` files (`strategy.js`, `riptide-strategy.js`, `theta-strategy.js`, `yolo-strategy.js`) contain the original entry + exit logic used by the cron-based system. They still work as standalone scripts but are now backup only — `scanner.js` and `exit-monitor.js` have absorbed all entry and exit logic respectively. Similarly, `collector.js` (data collection) is now handled by `scanner.js`.
 
 ## Dashboard API
 
@@ -302,6 +249,3 @@ Read-only JSON endpoints:
 | `GET /api/yolo` | Yolo open/closed positions, delta stats |
 | `GET /api/summary` | Combined KPIs across all 4 strategies |
 
-## Status
-
-Paper trading — no real money at risk. Not deployed to production.

@@ -194,6 +194,7 @@ app.get('/api/research', (req, res) => {
       hasEarnings: !!alert.next_earnings_date,
       isSweep: !!alert.has_sweep,
       isIndex: ['SPX','SPXW','SPY','QQQ','IWM','DIA','XSP','VIX','NDX','RUT'].includes(alert.ticker),
+      alertTime: alert.created_at || null,
       alertDate: (alert.created_at || '').slice(0, 10),
       entryBid: s ? s.entryBid : parseFloat(alert.bid || 0),
       entryAsk: s ? s.entryAsk : parseFloat(alert.ask || 0),
