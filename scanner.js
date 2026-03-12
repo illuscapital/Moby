@@ -952,7 +952,7 @@ const THETA_PARAMS = {
   shortStrikeOtmPct: 0.08,
   wingWidth: 5,
   wingWidthPct: 0.03,
-  maxRiskPerTrade: 2500,
+  maxRiskPerTrade: 5000,
   maxOpenPositions: 5,
   excludeIndexes: true,
 };

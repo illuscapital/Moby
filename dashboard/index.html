@@ -224,13 +224,13 @@ function renderFlowTable(state) {
 
   if (state.closedPositions?.length) {
     html += `<div class="section-title">Closed Positions (${state.closedPositions.length})</div><div class="table-wrap"><table>
-      <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Entry</th><th>Exit</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>Hold</th><th>Reason</th></tr>`;
+      <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Entry</th><th>Exit</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>ER Date</th><th>Hold</th><th>Reason</th></tr>`;
     for (const p of [...state.closedPositions].reverse()) {
       html += `<tr>
         <td><strong>${p.ticker}</strong></td><td>${(p.type||'').toUpperCase()}</td><td>$${p.strike}</td>
         <td>$${p.entryPrice?.toFixed(2)}</td><td>$${p.exitPrice?.toFixed(2)}</td><td>${p.contracts}</td>
         <td class="${pnlClass(p.pnl)}">${pnl(p.pnl)}</td><td class="${pnlClass(p.pnlPct)}">${pct(p.pnlPct)}</td>
-        <td>${p.entryIv ? (p.entryIv*100).toFixed(0)+'%' : '—'}</td><td>${p.holdDays}d</td>
+        <td>${p.entryIv ? (p.entryIv*100).toFixed(0)+'%' : '—'}</td><td>${p.earningsDate||'—'}</td><td>${p.holdDays}d</td>
         <td>${(p.exitReason||'').split(' ')[0]}</td>
       </tr>`;
     }

@@ -212,22 +212,11 @@ function flowShouldExit(pos, currentPrice) {
     }
   }
 
-  // 2. Emergency exit: DTE <= 1
-  if (d <= FLOW_PARAMS.emergencyExitDte) {
-    return { exit: true, reason: `emergency_dte (${d} DTE remaining)` };
-  }
-
-  // 3. Pre-expiry exit: if earnings are AFTER option expiry, exit at ≤3 DTE
-  if (pos.earningsDate && pos.expiry) {
-    if (pos.earningsDate > pos.expiry && d <= FLOW_PARAMS.preExpiryExitDte) {
-      return { exit: true, reason: `pre_expiry (ER ${pos.earningsDate} is after expiry ${pos.expiry}, ${d} DTE left)` };
-    }
-  }
-
-  // 4. Earnings-based exit
+  // 2. Earnings-based exit (checked before DTE emergency — we hold through earnings)
   if (pos.earningsDate) {
     const erDate = pos.earningsDate;
     const erTime = (pos.erTime || '').toLowerCase();
+    const earningsImminent = todayStr <= erDate; // earnings today or in the future
 
     if (erTime === 'bmo' || erTime === 'before' || erTime === 'premarket') {
       if (todayStr >= erDate) {
@@ -243,6 +232,23 @@ function flowShouldExit(pos, currentPrice) {
       if (todayStr >= exitDate) {
         return { exit: true, reason: `earnings_unknown_timing (ER ${erDate}, exit ${exitDate})` };
       }
+    }
+
+    // If earnings are today or upcoming, do NOT fire emergency DTE — hold for the event
+    if (earningsImminent) {
+      return { exit: false };
+    }
+  }
+
+  // 3. Emergency exit: DTE <= 1 (only if no imminent earnings)
+  if (d <= FLOW_PARAMS.emergencyExitDte) {
+    return { exit: true, reason: `emergency_dte (${d} DTE remaining)` };
+  }
+
+  // 4. Pre-expiry exit: if earnings are AFTER option expiry, exit at ≤3 DTE
+  if (pos.earningsDate && pos.expiry) {
+    if (pos.earningsDate > pos.expiry && d <= FLOW_PARAMS.preExpiryExitDte) {
+      return { exit: true, reason: `pre_expiry (ER ${pos.earningsDate} is after expiry ${pos.expiry}, ${d} DTE left)` };
     }
   }
 

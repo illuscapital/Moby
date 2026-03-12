@@ -78,7 +78,7 @@ Sell iron condors around earnings when IV is elevated and no strong directional 
 | Earnings window | 0–3 trading days before ER |
 | Short strike OTM | ~8% each side |
 | Wing width | $5 or 3% of stock price (whichever is greater) |
-| Max risk per trade | $2,500 |
+| Max risk per trade | $5,000 |
 | Max open positions | 5 |
 | Exclude indexes | Yes |
 | Skip if Flow has position | Yes |
