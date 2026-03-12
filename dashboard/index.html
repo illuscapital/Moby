@@ -61,21 +61,27 @@
 
   /* Research Tab */
   .research-filters { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-top: 16px; }
-  .research-filters .filter-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .research-filters .filter-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px 32px; }
   .research-filters .filter-row { display: flex; flex-direction: column; gap: 4px; }
   .research-filters label { color: var(--fg2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
   .research-filters .filter-val { color: var(--fg); font-size: 12px; font-weight: 600; }
   .research-filters .checkbox-row { display: flex; gap: 20px; margin-top: 12px; align-items: center; }
   .research-filters .checkbox-row label { display: flex; align-items: center; gap: 4px; cursor: pointer; text-transform: none; font-size: 12px; color: var(--fg); }
 
-  /* noUiSlider overrides */
-  .noUi-target { background: var(--bg3); border: none; border-radius: 2px; height: 6px; box-shadow: none; }
-  .noUi-connect { background: var(--blue); opacity: 0.5; }
-  .noUi-handle { background: var(--blue); border: 2px solid var(--bg); border-radius: 50%; width: 18px !important; height: 18px !important; right: -9px !important; top: -7px !important; box-shadow: 0 0 4px rgba(0,0,0,0.4); cursor: pointer; }
-  .noUi-handle::before, .noUi-handle::after { display: none; }
-  .noUi-handle:hover { background: #79c0ff; }
-  .noUi-horizontal { height: 6px; margin: 12px 0 6px; }
+  /* noUiSlider — scaled down */
+  .noUi-horizontal { height: 10px !important; }
+  .noUi-horizontal .noUi-handle { width: 24px !important; height: 20px !important; right: -12px !important; top: -6px !important; }
+  .noUi-handle::before, .noUi-handle::after { height: 8px !important; top: 5px !important; }
   .research-summary { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin: 16px 0; }
+
+  /* Optimizer */
+  .opt-btn { background: var(--purple); color: #fff; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 600; margin-left: 16px; }
+  .opt-btn:hover { opacity: 0.85; }
+  .opt-btn:disabled { opacity: 0.5; cursor: wait; }
+  .opt-results { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 16px 0; }
+  .opt-results table { font-size: 12px; }
+  .opt-results tr { cursor: pointer; }
+  .opt-results tr:hover td { background: var(--bg3); }
 
   /* Responsive */
   @media (max-width: 900px) {
@@ -442,10 +448,10 @@ let researchData = null;
 let researchLoaded = false;
 
 const RESEARCH_DEFAULTS = {
-  premiumMin: 0, premiumMax: 10000000,
+  premiumMin: 0, premiumMax: 5000000,
   volOiMin: 0, volOiMax: 200,
-  ivMin: 0, ivMax: 500,
-  dteMin: 0, dteMax: 730,
+  ivMin: 0, ivMax: 200,
+  dteMin: 0, dteMax: 700,
   otmMin: 0, otmMax: 100,
   requireEarnings: false, excludeIndexes: true, sweepsOnly: false,
 };
@@ -503,10 +509,10 @@ function renderResearchTab() {
   const fmtPct = v => v + '%';
 
   const sliders = [
-    { label: 'Premium', keyMin: 'premiumMin', keyMax: 'premiumMax', min: 0, max: 10000000, step: 50000, fmt: fmtK },
+    { label: 'Premium', keyMin: 'premiumMin', keyMax: 'premiumMax', min: 0, max: 5000000, step: 50000, fmt: fmtK },
     { label: 'Vol/OI', keyMin: 'volOiMin', keyMax: 'volOiMax', min: 0, max: 200, step: 1, fmt: v => parseFloat(v).toFixed(1) },
-    { label: 'IV', keyMin: 'ivMin', keyMax: 'ivMax', min: 0, max: 500, step: 5, fmt: fmtPct },
-    { label: 'DTE', keyMin: 'dteMin', keyMax: 'dteMax', min: 0, max: 730, step: 1, fmt: v => Math.round(v) },
+    { label: 'IV', keyMin: 'ivMin', keyMax: 'ivMax', min: 0, max: 200, step: 5, fmt: fmtPct },
+    { label: 'DTE', keyMin: 'dteMin', keyMax: 'dteMax', min: 0, max: 700, step: 1, fmt: v => Math.round(v) },
     { label: 'OTM%', keyMin: 'otmMin', keyMax: 'otmMax', min: 0, max: 100, step: 1, fmt: fmtPct },
   ];
 
@@ -525,8 +531,13 @@ function renderResearchTab() {
       <label><input type="checkbox" id="rf-requireEarnings" ${f.requireEarnings ? 'checked' : ''}> Require Earnings</label>
       <label><input type="checkbox" id="rf-excludeIndexes" ${f.excludeIndexes ? 'checked' : ''}> Exclude Indexes</label>
       <label><input type="checkbox" id="rf-sweepsOnly" ${f.sweepsOnly ? 'checked' : ''}> Sweeps Only</label>
+      <button class="opt-btn" id="runOptimizer">🔍 Optimize</button>
+      <button class="opt-btn" id="hideOptimizer" style="background:var(--bg3);display:none;">✕ Hide</button>
     </div>
   </div>`;
+
+  // Optimizer results (preserved across re-renders)
+  html += '<div id="optimizerResults"></div>';
 
   // Summary cards
   html += `<div class="research-summary">
@@ -610,6 +621,148 @@ function renderResearchTab() {
       });
     }
   }
+
+  // Optimizer buttons
+  const optBtn = document.getElementById('runOptimizer');
+  const hideBtn = document.getElementById('hideOptimizer');
+  if (optBtn) {
+    optBtn.addEventListener('click', () => {
+      optBtn.disabled = true;
+      optBtn.textContent = '⏳ Running...';
+      setTimeout(() => {
+        runOptimizer(allAlerts);
+        optBtn.disabled = false;
+        optBtn.textContent = '🔍 Optimize';
+        if (hideBtn) hideBtn.style.display = 'inline-block';
+      }, 50);
+    });
+  }
+  if (hideBtn) {
+    hideBtn.addEventListener('click', () => {
+      lastOptimizerHtml = '';
+      const optDiv = document.getElementById('optimizerResults');
+      if (optDiv) optDiv.innerHTML = '';
+      hideBtn.style.display = 'none';
+    });
+  }
+
+  // Restore previous optimizer results
+  if (lastOptimizerHtml) {
+    const optDiv = document.getElementById('optimizerResults');
+    if (optDiv) optDiv.innerHTML = lastOptimizerHtml;
+    attachOptimizerRowHandlers();
+    if (hideBtn) hideBtn.style.display = 'inline-block';
+  }
+}
+
+let lastOptimizerHtml = '';
+
+function runOptimizer(allAlerts) {
+  const premMins = [0, 100000, 250000, 500000];
+  const voiMins = [0, 3, 5, 10];
+  const ivMaxes = [50, 80, 120, 200];
+  const dteRanges = [[0,30],[0,60],[0,120],[0,180],[31,60],[31,120],[60,180],[0,700]];
+  const otmRanges = [[0,4],[0,10],[0,15],[0,30],[5,15],[10,30],[0,100]];
+  const sweepOpts = [false, true];
+
+  const MIN_TRADES = 15;
+  const results = [];
+
+  for (const premMin of premMins) {
+    for (const voiMin of voiMins) {
+      for (const ivMax of ivMaxes) {
+        for (const [dteMin, dteMax] of dteRanges) {
+          for (const [otmMin, otmMax] of otmRanges) {
+            for (const sweeps of sweepOpts) {
+              const f = {
+                premiumMin: premMin, premiumMax: 5000000,
+                volOiMin: voiMin, volOiMax: 200,
+                ivMin: 0, ivMax: ivMax,
+                dteMin, dteMax, otmMin, otmMax,
+                requireEarnings: false, excludeIndexes: true, sweepsOnly: sweeps,
+              };
+              const passing = filterResearchAlerts(allAlerts, f);
+              const withPnl = passing.filter(a => a.simulatedPnl !== null);
+              if (withPnl.length < MIN_TRADES) continue;
+
+              const totalPnl = withPnl.reduce((s, a) => s + a.simulatedPnl, 0);
+              const wins = withPnl.filter(a => a.simulatedPnl > 0).length;
+              const winRate = wins / withPnl.length;
+              const avgPnl = totalPnl / withPnl.length;
+
+              results.push({
+                premMin, voiMin, ivMax, dteMin, dteMax, otmMin, otmMax, sweeps,
+                alerts: passing.length, trades: withPnl.length,
+                totalPnl, wins, losses: withPnl.length - wins, winRate, avgPnl,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Sort by total PnL descending
+  results.sort((a, b) => b.totalPnl - a.totalPnl);
+  const top = results.slice(0, 25);
+
+  const fmtK2 = v => v >= 1000000 ? '$' + (v/1000000).toFixed(1)+'M' : v >= 1000 ? '$'+(v/1000).toFixed(0)+'K' : '$'+v;
+
+  let html = `<div class="opt-results">
+    <div class="section-title">🔍 Optimizer Results — Top 25 of ${results.length.toLocaleString()} combos (min ${MIN_TRADES} trades)</div>
+    <div class="table-wrap"><table>
+    <tr><th>#</th><th>Prem Min</th><th>Vol/OI≥</th><th>IV≤</th><th>DTE</th><th>OTM%</th><th>Sweeps</th><th>Alerts</th><th>Trades</th><th>PnL</th><th>Win Rate</th><th>Avg PnL</th><th>W/L</th></tr>`;
+
+  for (let i = 0; i < top.length; i++) {
+    const r = top[i];
+    html += `<tr class="opt-row" data-idx="${i}"
+      data-prem="${r.premMin}" data-voi="${r.voiMin}" data-iv="${r.ivMax}"
+      data-dtemin="${r.dteMin}" data-dtemax="${r.dteMax}"
+      data-otmmin="${r.otmMin}" data-otmmax="${r.otmMax}"
+      data-sweeps="${r.sweeps}">
+      <td>${i+1}</td>
+      <td>${fmtK2(r.premMin)}</td>
+      <td>${r.voiMin}</td>
+      <td>${r.ivMax}%</td>
+      <td>${r.dteMin}–${r.dteMax}</td>
+      <td>${r.otmMin}–${r.otmMax}%</td>
+      <td>${r.sweeps ? '✓' : '—'}</td>
+      <td>${r.alerts}</td>
+      <td>${r.trades}</td>
+      <td class="${pnlClass(r.totalPnl)}" style="font-weight:700">${pnl(r.totalPnl)}</td>
+      <td>${(r.winRate*100).toFixed(1)}%</td>
+      <td class="${pnlClass(r.avgPnl)}">${pnl(r.avgPnl)}</td>
+      <td>${r.wins}W/${r.losses}L</td>
+    </tr>`;
+  }
+  html += '</table></div><div style="color:var(--fg2);font-size:11px;margin-top:8px;">Click any row to apply those filters</div></div>';
+
+  lastOptimizerHtml = html;
+  const optDiv = document.getElementById('optimizerResults');
+  if (optDiv) optDiv.innerHTML = html;
+  attachOptimizerRowHandlers();
+}
+
+function attachOptimizerRowHandlers() {
+  document.querySelectorAll('.opt-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const d = row.dataset;
+      setResearchFilter('premiumMin', parseFloat(d.prem));
+      setResearchFilter('premiumMax', 5000000);
+      setResearchFilter('volOiMin', parseFloat(d.voi));
+      setResearchFilter('volOiMax', 200);
+      setResearchFilter('ivMin', 0);
+      setResearchFilter('ivMax', parseFloat(d.iv));
+      setResearchFilter('dteMin', parseFloat(d.dtemin));
+      setResearchFilter('dteMax', parseFloat(d.dtemax));
+      setResearchFilter('otmMin', parseFloat(d.otmmin));
+      setResearchFilter('otmMax', parseFloat(d.otmmax));
+      setResearchFilter('sweepsOnly', d.sweeps === 'true');
+      setResearchFilter('excludeIndexes', true);
+      setResearchFilter('requireEarnings', false);
+      renderResearchTab();
+    });
+  });
 }
 
 async function loadResearchData() {

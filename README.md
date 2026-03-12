@@ -42,11 +42,11 @@ Sell credit spreads against high-IV unusual flow. Inverse of Flow — profits fr
 | Parameter | Value |
 |---|---|
 | Min premium | $100,000 |
-| Min vol/OI ratio | 3x |
-| DTE range | 5–90 |
-| OTM range | 10–30% |
-| Min entry IV | 60% |
-| Min IV percentile | 70th |
+| Min vol/OI ratio | 0 |
+| DTE range | 0–90 |
+| OTM range | 0–50% |
+| Min entry IV | 80% |
+| Min IV percentile | 60th |
 | Earnings exclusion | Skip if ER within 14 trading days |
 | Allowed types | Puts and calls |
 | Spread width | $2.50 (strike ≤ $50), $5.00 (strike > $50) |

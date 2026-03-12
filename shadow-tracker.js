@@ -235,12 +235,18 @@ async function runCycle(state, isFirstRun) {
     if (pos.status === 'active' && pos.expiry < todayStr) {
       pos.status = 'expired';
       // Final PnL based on last known price (option expired, likely worthless or near it)
-      if (pos.lastPrice !== null && pos.entryAsk > 0) {
-        pos.simulatedPnl = (pos.lastPrice - pos.entryAsk) * 100;
+      // Fixed $1000 allocation: contracts = floor($1000 / (ask * 100)); skip if too expensive
+      if (pos.entryAsk * 100 > 1000) {
+        pos.simulatedPnl = 0;
+        pos.simulatedPnlPct = 0;
+      } else if (pos.lastPrice !== null && pos.entryAsk > 0) {
+        const contracts = Math.floor(1000 / (pos.entryAsk * 100));
+        pos.simulatedPnl = (pos.lastPrice - pos.entryAsk) * 100 * contracts;
         pos.simulatedPnlPct = (pos.lastPrice - pos.entryAsk) / pos.entryAsk * 100;
       } else if (pos.entryAsk > 0) {
         // Expired with no price data — assume worthless
-        pos.simulatedPnl = -pos.entryAsk * 100;
+        const contracts = Math.floor(1000 / (pos.entryAsk * 100));
+        pos.simulatedPnl = -pos.entryAsk * 100 * contracts;
         pos.simulatedPnlPct = -100;
       }
       expiredCount++;
@@ -299,10 +305,14 @@ async function runCycle(state, isFirstRun) {
         pos.peakPrice = pos.lastPrice;
       }
 
-      // Simulated PnL: (lastPrice - entryAsk) * 100 (1 contract at ask)
-      if (pos.entryAsk > 0) {
-        pos.simulatedPnl = (pos.lastPrice - pos.entryAsk) * 100;
+      // Simulated PnL: $1000 fixed allocation per trade; skip if too expensive
+      if (pos.entryAsk > 0 && pos.entryAsk * 100 <= 1000) {
+        const contracts = Math.floor(1000 / (pos.entryAsk * 100));
+        pos.simulatedPnl = (pos.lastPrice - pos.entryAsk) * 100 * contracts;
         pos.simulatedPnlPct = (pos.lastPrice - pos.entryAsk) / pos.entryAsk * 100;
+      } else if (pos.entryAsk > 0) {
+        pos.simulatedPnl = 0;
+        pos.simulatedPnlPct = 0;
       }
 
       pricedCount++;
