@@ -2,7 +2,6 @@
 
 Options trading system built on [Unusual Whales](https://unusualwhales.com) flow data. Four complementary strategies that exploit options mispricing around earnings, IV crush, and whale activity.
 
-**Status: Paper trading.** All positions are simulated. No broker integration.
 
 ## Strategies
 
