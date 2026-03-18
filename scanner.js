@@ -362,21 +362,26 @@ function logTrade(tradesFile, trade) {
 // ════════════════════════════════════════════════════════════════════
 
 const FLOW_PARAMS = {
-  minPremium: 200000,
-  minVolOiRatio: 5,
-  maxDte: 45,
-  minDte: 5,
-  minOtmPct: 2,
-  maxOtmPct: 15,
+  minPremium: 100000,
+  maxPremium: 5000000,
+  minVolOiRatio: 0,
+  maxVolOiRatio: 50,
+  maxDte: 90,
+  minDte: 15,
+  minOtmPct: 0,
+  maxOtmPct: 20,
+  minOptionPrice: 0,
+  maxOptionPrice: 3.00,
   requireEarnings: true,
-  earningsWindowDays: 10,
+  earningsWindowDays: 14,
   excludeIndexes: true,
   requireSingleLeg: true,
+  requireSweep: true,
   minAskSidePct: 0.70,
-  maxEntryIv: 0.80,
-  minEntryIv: 0.15,
-  maxPositionSize: 5000,
-  maxOpenPositions: 10,
+  maxEntryIv: 0.70,
+  minEntryIv: 0,
+  maxPositionSize: 500,
+  maxOpenPositions: 50,
   dpConfirmMinPrints: 50,
   dpConfirmMinNotional: 1000000,
   dpConfirmSizeMultiplier: 1.5,
@@ -384,10 +389,14 @@ const FLOW_PARAMS = {
 
 function flowFilterAlert(alert) {
   const premium = parseFloat(alert.total_premium || 0);
-  if (premium < FLOW_PARAMS.minPremium) return { pass: false };
+  if (premium < FLOW_PARAMS.minPremium || premium > FLOW_PARAMS.maxPremium) return { pass: false };
 
   const volOi = parseFloat(alert.volume_oi_ratio || 0);
-  if (volOi < FLOW_PARAMS.minVolOiRatio) return { pass: false };
+  if (volOi < FLOW_PARAMS.minVolOiRatio || volOi > FLOW_PARAMS.maxVolOiRatio) return { pass: false };
+
+  // Option price filter (per-share ask price from alert)
+  const optionAsk = parseFloat(alert.ask || 0);
+  if (optionAsk > 0 && (optionAsk < FLOW_PARAMS.minOptionPrice || optionAsk > FLOW_PARAMS.maxOptionPrice)) return { pass: false };
 
   if (FLOW_PARAMS.excludeIndexes && INDEX_TICKERS.has(alert.ticker)) return { pass: false };
 
@@ -418,6 +427,8 @@ function flowFilterAlert(alert) {
   }
 
   if (FLOW_PARAMS.requireSingleLeg && alert.has_multileg) return { pass: false };
+
+  if (FLOW_PARAMS.requireSweep && !alert.has_sweep) return { pass: false };
 
   const askPrem = parseFloat(alert.total_ask_side_prem || 0);
   if (premium > 0 && (askPrem / premium) < FLOW_PARAMS.minAskSidePct) return { pass: false };
@@ -477,16 +488,12 @@ async function processFlowEntry(alert, enrichmentCache) {
   }
 
   // IV filter
-  if (!quote.iv || quote.iv === 0) {
-    console.log(`${LOG_PREFIX()} [flow] SKIP (no IV data): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
+  if (FLOW_PARAMS.minEntryIv > 0 && (!quote.iv || quote.iv < FLOW_PARAMS.minEntryIv)) {
+    console.log(`${LOG_PREFIX()} [flow] SKIP (IV too low: ${quote.iv ? (quote.iv * 100).toFixed(0) + '%' : 'N/A'}): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
     return null;
   }
-  if (quote.iv > FLOW_PARAMS.maxEntryIv) {
+  if (FLOW_PARAMS.maxEntryIv > 0 && quote.iv && quote.iv > FLOW_PARAMS.maxEntryIv) {
     console.log(`${LOG_PREFIX()} [flow] SKIP (IV too high: ${(quote.iv * 100).toFixed(0)}%): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
-    return null;
-  }
-  if (quote.iv < FLOW_PARAMS.minEntryIv) {
-    console.log(`${LOG_PREFIX()} [flow] SKIP (IV too low: ${(quote.iv * 100).toFixed(0)}%): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
     return null;
   }
 
@@ -768,31 +775,42 @@ async function processRiptideEntry(alert, enrichmentCache) {
 
 const YOLO_PARAMS = {
   minPremium: 100000,
-  minVolOiRatio: 3,
+  maxPremium: 5000000,
+  minVolOiRatio: 0,
+  maxVolOiRatio: 50,
   maxDte: 90,
-  minDte: 5,
-  minOtmPct: 10,
-  maxOtmPct: 30,
+  minDte: 15,
+  minOtmPct: 0,
+  maxOtmPct: 20,
+  minOptionPrice: 0,
+  maxOptionPrice: 3.00,
   excludeIndexes: true,
   requireSingleLeg: true,
   minAskSidePct: 0.70,
   allowedTypes: ['put', 'call'],
   skipSweeps: false,
-  minEntryIv: 0.60,
-  minIvPctl: 0.70,
-  earningsExclusionDays: 10,
-  maxCostPerTrade: 5000,
-  maxOpenPositions: 10,
+  minEntryIv: 0,
+  maxEntryIv: 0.70,
+  earningsExclusionDays: 14,
+  maxCostPerTrade: 500,
+  maxOpenPositions: 50,
   maxEntryDelta: 0.10,
   thetaGuardFraction: 2 / 3,
+  dpConfirmMinPrints: 50,
+  dpConfirmMinNotional: 1000000,
+  dpConfirmSizeMultiplier: 1.5,
 };
 
 function yoloFilterAlert(alert) {
   const premium = parseFloat(alert.total_premium || 0);
-  if (premium < YOLO_PARAMS.minPremium) return { pass: false };
+  if (premium < YOLO_PARAMS.minPremium || premium > YOLO_PARAMS.maxPremium) return { pass: false };
 
   const volOi = parseFloat(alert.volume_oi_ratio || 0);
-  if (volOi < YOLO_PARAMS.minVolOiRatio) return { pass: false };
+  if (volOi < YOLO_PARAMS.minVolOiRatio || volOi > YOLO_PARAMS.maxVolOiRatio) return { pass: false };
+
+  // Option price filter
+  const optionAsk = parseFloat(alert.ask || 0);
+  if (optionAsk > 0 && (optionAsk < YOLO_PARAMS.minOptionPrice || optionAsk > YOLO_PARAMS.maxOptionPrice)) return { pass: false };
 
   if (YOLO_PARAMS.excludeIndexes && INDEX_TICKERS.has(alert.ticker)) return { pass: false };
   if (!YOLO_PARAMS.allowedTypes.includes(alert.type)) return { pass: false };
@@ -812,9 +830,10 @@ function yoloFilterAlert(alert) {
     if (otmPct < YOLO_PARAMS.minOtmPct || otmPct > YOLO_PARAMS.maxOtmPct) return { pass: false };
   } else return { pass: false };
 
+  // Earnings: only enter if NO earnings date OR earnings >= 14 trading days away
   if (alert.next_earnings_date && YOLO_PARAMS.earningsExclusionDays > 0) {
     const erBdays = tradingDaysBetween(new Date(), new Date(alert.next_earnings_date));
-    if (erBdays >= 0 && erBdays <= YOLO_PARAMS.earningsExclusionDays) return { pass: false };
+    if (erBdays >= 0 && erBdays < YOLO_PARAMS.earningsExclusionDays) return { pass: false };
   }
 
   if (YOLO_PARAMS.requireSingleLeg && alert.has_multileg) return { pass: false };
@@ -877,17 +896,17 @@ async function processYoloEntry(alert, enrichmentCache) {
     return null;
   }
 
-  if (!quote.iv || quote.iv < YOLO_PARAMS.minEntryIv) {
+  if (YOLO_PARAMS.minEntryIv > 0 && (!quote.iv || quote.iv < YOLO_PARAMS.minEntryIv)) {
     console.log(`${LOG_PREFIX()} [yolo] SKIP (IV too low: ${quote.iv ? (quote.iv * 100).toFixed(0) + '%' : 'N/A'}): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
+    return null;
+  }
+  if (YOLO_PARAMS.maxEntryIv > 0 && quote.iv && quote.iv > YOLO_PARAMS.maxEntryIv) {
+    console.log(`${LOG_PREFIX()} [yolo] SKIP (IV too high: ${(quote.iv * 100).toFixed(0)}%): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
     return null;
   }
 
   const enrichment = enrichmentCache[sig.ticker] || {};
   const ivPctl = enrichment._ivPctl || 0;
-  if (YOLO_PARAMS.minIvPctl > 0 && ivPctl > 0 && ivPctl < YOLO_PARAMS.minIvPctl) {
-    console.log(`${LOG_PREFIX()} [yolo] SKIP (IV pctl too low: ${(ivPctl * 100).toFixed(0)}%): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
-    return null;
-  }
 
   const entryPrice = quote.ask > 0 ? quote.ask : quote.price;
   const costPerContract = entryPrice * 100;
@@ -907,7 +926,13 @@ async function processYoloEntry(alert, enrichmentCache) {
     return null;
   }
 
-  const contracts = Math.max(1, Math.floor(YOLO_PARAMS.maxCostPerTrade / costPerContract));
+  // Dark pool confirmation check
+  const dpPrintCount = enrichment._dpPrintCount || 0;
+  const dpNotional = enrichment._dpRecentNotional || 0;
+  const dpConfirmed = dpPrintCount >= YOLO_PARAMS.dpConfirmMinPrints && dpNotional >= YOLO_PARAMS.dpConfirmMinNotional;
+  const effectiveSize = dpConfirmed ? YOLO_PARAMS.maxCostPerTrade * YOLO_PARAMS.dpConfirmSizeMultiplier : YOLO_PARAMS.maxCostPerTrade;
+
+  const contracts = Math.max(1, Math.floor(effectiveSize / costPerContract));
   const totalCost = contracts * costPerContract;
 
   const daysToExpiry = dte(sig.expiry);
@@ -918,7 +943,7 @@ async function processYoloEntry(alert, enrichmentCache) {
     ...sig, entryPrice, costPerContract, totalCost, contracts,
     entryDate: today(), entryTime: sig.alertTime || new Date().toISOString(),
     entryIv: quote.iv, thetaExitDate, maxHoldDays, status: 'open',
-    ivPctl: ivPctl || null,
+    ivPctl: ivPctl || null, dpConfirmed,
     dpPrintCount: enrichment._dpPrintCount || null,
     dpRecentNotional: enrichment._dpRecentNotional || null,
     dpAvgPrintSize: enrichment._dpAvgPrintSize || null,
@@ -1278,9 +1303,9 @@ async function main() {
   console.log(`${LOG_PREFIX()} Poll interval: ${POLL_INTERVAL_MS / 1000}s | Rate limit: ${RATE_LIMIT_MS}ms`);
   console.log(`${LOG_PREFIX()} Strategies: flow, riptide, yolo (per-cycle) | theta (every 30min)`);
   console.log(`${LOG_PREFIX()} Entry filters:`);
-  console.log(`${LOG_PREFIX()}   Flow:    premium≥$${FLOW_PARAMS.minPremium/1000}K, vol/OI≥${FLOW_PARAMS.minVolOiRatio}x, DTE ${FLOW_PARAMS.minDte}-${FLOW_PARAMS.maxDte}, OTM ${FLOW_PARAMS.minOtmPct}-${FLOW_PARAMS.maxOtmPct}%, IV ${(FLOW_PARAMS.minEntryIv*100).toFixed(0)}-${(FLOW_PARAMS.maxEntryIv*100).toFixed(0)}%, ER within ${FLOW_PARAMS.earningsWindowDays}d`);
+  console.log(`${LOG_PREFIX()}   Flow:    prem $${FLOW_PARAMS.minPremium/1000}K-$${FLOW_PARAMS.maxPremium/1000000}M, vol/OI ${FLOW_PARAMS.minVolOiRatio}-${FLOW_PARAMS.maxVolOiRatio}x, opt $${FLOW_PARAMS.minOptionPrice}-$${FLOW_PARAMS.maxOptionPrice}, DTE ${FLOW_PARAMS.minDte}-${FLOW_PARAMS.maxDte}, OTM ${FLOW_PARAMS.minOtmPct}-${FLOW_PARAMS.maxOtmPct}%, IV ${(FLOW_PARAMS.minEntryIv*100).toFixed(0)}-${(FLOW_PARAMS.maxEntryIv*100).toFixed(0)}%, ER within ${FLOW_PARAMS.earningsWindowDays}d, sweeps=${FLOW_PARAMS.requireSweep}, $${FLOW_PARAMS.maxPositionSize}/trade, max ${FLOW_PARAMS.maxOpenPositions}`);
   console.log(`${LOG_PREFIX()}   Riptide: premium≥$${RIPTIDE_PARAMS.minPremium/1000}K, vol/OI≥${RIPTIDE_PARAMS.minVolOiRatio}x, DTE ${RIPTIDE_PARAMS.minDte}-${RIPTIDE_PARAMS.maxDte}, OTM ${RIPTIDE_PARAMS.minOtmPct}-${RIPTIDE_PARAMS.maxOtmPct}%, IV≥${(RIPTIDE_PARAMS.minEntryIv*100).toFixed(0)}%, credit≥$${RIPTIDE_PARAMS.minCreditPerContract}`);
-  console.log(`${LOG_PREFIX()}   Yolo:    premium≥$${YOLO_PARAMS.minPremium/1000}K, vol/OI≥${YOLO_PARAMS.minVolOiRatio}x, DTE ${YOLO_PARAMS.minDte}-${YOLO_PARAMS.maxDte}, OTM ${YOLO_PARAMS.minOtmPct}-${YOLO_PARAMS.maxOtmPct}%, IV≥${(YOLO_PARAMS.minEntryIv*100).toFixed(0)}%, maxΔ $${YOLO_PARAMS.maxEntryDelta}`);
+  console.log(`${LOG_PREFIX()}   Yolo:    prem $${YOLO_PARAMS.minPremium/1000}K-$${YOLO_PARAMS.maxPremium/1000000}M, vol/OI ${YOLO_PARAMS.minVolOiRatio}-${YOLO_PARAMS.maxVolOiRatio}x, opt $${YOLO_PARAMS.minOptionPrice}-$${YOLO_PARAMS.maxOptionPrice}, DTE ${YOLO_PARAMS.minDte}-${YOLO_PARAMS.maxDte}, OTM ${YOLO_PARAMS.minOtmPct}-${YOLO_PARAMS.maxOtmPct}%, IV ${(YOLO_PARAMS.minEntryIv*100).toFixed(0)}-${(YOLO_PARAMS.maxEntryIv*100).toFixed(0)}%, ER excl ${YOLO_PARAMS.earningsExclusionDays}d, $${YOLO_PARAMS.maxCostPerTrade}/trade, max ${YOLO_PARAMS.maxOpenPositions}`);
   console.log(`${LOG_PREFIX()}   Theta:   IV rank≥${(THETA_PARAMS.minIvRank*100).toFixed(0)}%, ER in ${THETA_PARAMS.minEarningsWindowDays}-${THETA_PARAMS.earningsWindowDays}d, condor ${(THETA_PARAMS.shortStrikeOtmPct*100).toFixed(0)}% OTM, wings $${THETA_PARAMS.wingWidth}`);
 
   const seenAlerts = loadSeenAlerts();
