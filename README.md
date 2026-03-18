@@ -128,6 +128,8 @@ No hard profit cap — let winners run, trailing stop locks in gains.
 
 ## Running
 
+All four processes run as **systemd user services** — they auto-start on boot and restart on crash.
+
 ### Environment Variables
 
 | Variable | Required | Default | Description |
@@ -146,34 +148,40 @@ npm install
 
 Dependencies: `dotenv`, `express`. All API calls use Node.js built-in `https`.
 
-### Start Scanner (entries)
+### Service Management
 
 ```bash
-cd Moby && nohup setsid node scanner.js </dev/null >> data/scanner.log 2>&1 &
+# Status
+systemctl --user status moby-scanner moby-exit-monitor moby-shadow-tracker moby-dashboard
+
+# Start/stop/restart individual services
+systemctl --user start moby-scanner
+systemctl --user stop moby-scanner
+systemctl --user restart moby-scanner
+
+# View logs
+journalctl --user -u moby-scanner -f
+tail -f data/scanner.log
+
+# Start all
+systemctl --user start moby-scanner moby-exit-monitor moby-shadow-tracker moby-dashboard
+
+# Stop all
+systemctl --user stop moby-scanner moby-exit-monitor moby-shadow-tracker moby-dashboard
 ```
 
-### Start Exit Monitor (exits)
+### Services
 
-```bash
-cd Moby && setsid nohup node exit-monitor.js >> data/exit-monitor.log 2>&1 &
-```
+| Service | Unit Name | Process | Log |
+|---|---|---|---|
+| Scanner | `moby-scanner` | `scanner.js` | `data/scanner.log` |
+| Exit Monitor | `moby-exit-monitor` | `exit-monitor.js` | `data/exit-monitor.log` |
+| Shadow Tracker | `moby-shadow-tracker` | `shadow-tracker.js` | `data/shadow-tracker.log` |
+| Dashboard | `moby-dashboard` | `dashboard/server.js` | `dashboard/dashboard.log` |
 
-### Start Dashboard
+Service files: `~/.config/systemd/user/moby-*.service`
 
-```bash
-node dashboard/server.js
-# or
-npm run dashboard
-```
-
-Dashboard at `http://localhost:3200`. Auto-refreshes every 30 seconds.
-
-### Stop Processes
-
-```bash
-pkill -f "scanner.js"
-pkill -f "exit-monitor.js"
-```
+User lingering is enabled (`loginctl enable-linger`) so services persist across logouts.
 
 ## Data Files
 
@@ -222,13 +230,15 @@ pkill -f "exit-monitor.js"
               └────────────────┘
 ```
 
-### Two Persistent Processes
+### Four Persistent Processes
 
 **`scanner.js`** — Entry system. Polls UW flow alerts every 90 seconds (configurable via `SCANNER_POLL_INTERVAL_MS`). Deduplicates alerts, archives to daily JSONL files, enriches tickers with IV percentile and dark pool data, then runs each new alert through Flow, Riptide, and Yolo entry filters. Theta runs on a separate 30-minute schedule within the same process (earnings-based, not flow-based). Screener collection and enrichment also run every 30 minutes. All entries tagged with `entrySource: 'scanner'`.
 
 **`exit-monitor.js`** — Exit system. Polls option prices every 90 seconds for all open positions across all 4 strategies. Performs mark-to-market valuation and checks each strategy's exit rules. Only runs during market hours (9:30 AM – 4:00 PM ET). Exits blocked before 10:00 AM ET (30-minute opening buffer). All exits tagged with `exitSource: 'exit-monitor'`.
 
-**Dashboard** (`dashboard/server.js`) — Read-only Express server on port 3200. Reads state files for open positions and JSONL trade logs for closed positions. Never mutates data.
+**`shadow-tracker.js`** — Research pricing. Monitors option prices for ALL historical flow alerts (not just traded ones). Runs every 30 minutes during market hours. Feeds the Research page on the dashboard for backtesting filter combinations.
+
+**`dashboard/server.js`** — Read-only Express server on port 3200. Reads state files for open positions and JSONL trade logs for closed positions. Never mutates data.
 
 ### Data Flow
 
@@ -237,9 +247,9 @@ pkill -f "exit-monitor.js"
 - Each strategy has its own state file and trade log
 - Dashboard computes all KPIs from JSONL at request time
 
-### Legacy Strategy Files
+### Legacy Files (deprecated)
 
-The individual strategy `.js` files (`strategy.js`, `riptide-strategy.js`, `theta-strategy.js`, `yolo-strategy.js`) contain the original entry + exit logic used by the cron-based system. They still work as standalone scripts but are now backup only — `scanner.js` and `exit-monitor.js` have absorbed all entry and exit logic respectively. Similarly, `collector.js` (data collection) is now handled by `scanner.js`.
+The standalone strategy files (`strategy.js`, `riptide-strategy.js`, `theta-strategy.js`, `yolo-strategy.js`, `collector.js`) are **deprecated**. All entry logic lives in `scanner.js`, all exit logic in `exit-monitor.js`. The old cron-based pipeline that called these files individually has been disabled. These files remain for reference only.
 
 ## Dashboard API
 
