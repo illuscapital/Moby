@@ -453,7 +453,8 @@ const RESEARCH_DEFAULTS = {
   ivMin: 0, ivMax: 200,
   dteMin: 0, dteMax: 700,
   otmMin: 0, otmMax: 100,
-  allPrice: true, allPremium: true, allVolOi: true, allIv: true, allDte: true, allOtm: true, allAskSide: true,
+  allPrice: true, allPremium: true, allVolOi: true, allIv: true, allDte: true, allOtm: true, allAskSide: true, allDaysToEr: true,
+  daysToErMin: 0, daysToErMax: 90,
   requireEarnings: false, excludeIndexes: true, sweepsOnly: false, singleLegOnly: false, askSideMin: 0, showActive: true, showExpired: true, showInvalid: true,
 };
 
@@ -495,6 +496,10 @@ function filterResearchAlerts(alerts, f) {
     if (!f.allOtm) {
       if (a.otmPct < f.otmMin || a.otmPct > f.otmMax) return false;
     }
+    if (!f.allDaysToEr) {
+      if (a.daysToEr === null || a.daysToEr === undefined) return false;
+      if (a.daysToEr < f.daysToErMin || a.daysToEr > f.daysToErMax) return false;
+    }
     if (f.requireEarnings && !a.hasEarnings) return false;
     if (f.excludeIndexes && a.isIndex) return false;
     if (f.sweepsOnly && !a.isSweep) return false;
@@ -530,6 +535,7 @@ const RESEARCH_COLUMNS = [
   { key: 'dte', label: 'DTE', type: 'number' },
   { key: 'otmPct', label: 'OTM%', type: 'number' },
   { key: 'earningsDate', label: 'ER', type: 'string', get: a => a.hasEarnings ? a.earningsDate : '' },
+  { key: 'daysToEr', label: 'Days to ER', type: 'number', get: a => a.daysToEr != null ? a.daysToEr : '' },
   { key: 'status', label: 'Status', type: 'string' },
 ];
 
@@ -649,6 +655,7 @@ function renderResearchTab() {
     { label: 'IV', keyMin: 'ivMin', keyMax: 'ivMax', allKey: 'allIv', min: 0, max: 200, step: 5, fmt: fmtPct },
     { label: 'DTE', keyMin: 'dteMin', keyMax: 'dteMax', allKey: 'allDte', min: 0, max: 700, step: 5, fmt: v => Math.round(v) },
     { label: 'OTM%', keyMin: 'otmMin', keyMax: 'otmMax', allKey: 'allOtm', min: 0, max: 100, step: 1, fmt: fmtPct },
+    { label: 'Days to ER', keyMin: 'daysToErMin', keyMax: 'daysToErMax', allKey: 'allDaysToEr', min: 0, max: 90, step: 1, fmt: v => Math.round(v) + 'd' },
     { label: 'Ask Side %', keyMin: 'askSideMin', keyMax: null, allKey: 'allAskSide', min: 0, max: 100, step: 5, fmt: fmtPct },
   ];
 

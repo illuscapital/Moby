@@ -209,6 +209,9 @@ app.get('/api/research', (req, res) => {
       lastAsk: s ? s.lastAsk : null,
       peakPrice: s ? s.peakPrice : null,
       status: s ? s.status : 'unknown',
+      daysToEr: alert.next_earnings_date && alert.created_at
+        ? Math.round((new Date(alert.next_earnings_date + 'T16:00:00') - new Date(alert.created_at)) / 86400000)
+        : null,
       simulatedPnl: s ? s.simulatedPnl : null,
       simulatedPnlPct: s ? s.simulatedPnlPct : null,
       lastUpdated: s ? s.lastUpdated : null,
