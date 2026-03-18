@@ -541,8 +541,12 @@ async function processFlowEntry(alert, enrichmentCache) {
 
 const RIPTIDE_PARAMS = {
   minPremium: 100000,
+  maxPremium: 5000000,
   minVolOiRatio: 0,
-  maxDte: 90,
+  maxVolOiRatio: 10,
+  minOptionPrice: 0,
+  maxOptionPrice: 3.00,
+  maxDte: 30,
   minDte: 0,
   minOtmPct: 0,
   maxOtmPct: 50,
@@ -550,34 +554,38 @@ const RIPTIDE_PARAMS = {
   earningsWindowDays: 10,
   excludeIndexes: true,
   requireSingleLeg: true,
-  minAskSidePct: 0.70,
+  requireSweep: true,
+  minAskSidePct: 0.15,
   allowedTypes: ['put', 'call'],
-  skipSweeps: false,
-  minEntryIv: 0.80,
+  minEntryIv: 0.20,
+  maxEntryIv: 2.00,
   minIvPctl: 0.60,
-  minOtmPctRiptide: 10,
-  earningsExclusionDays: 14,
+  earningsExclusionDays: 0,
   minCreditPerContract: 1.50,
   minCreditWidthPct: 0.25,
   spreadWidthByStrike: [
     { maxStrike: 50, width: 2.50 },
     { maxStrike: Infinity, width: 5.00 },
   ],
-  accountSize: 100000,
-  maxRiskPct: 0.05,
-  maxOpenPositions: 5,
+  accountSize: 10000,
+  maxRiskPct: 0.05,            // 10000 * 0.05 = $500 max risk per trade
+  maxOpenPositions: 50,
 };
 
 function riptideFilterAlert(alert) {
   const premium = parseFloat(alert.total_premium || 0);
-  if (premium < RIPTIDE_PARAMS.minPremium) return { pass: false };
+  if (premium < RIPTIDE_PARAMS.minPremium || premium > RIPTIDE_PARAMS.maxPremium) return { pass: false };
 
   const volOi = parseFloat(alert.volume_oi_ratio || 0);
-  if (volOi < RIPTIDE_PARAMS.minVolOiRatio) return { pass: false };
+  if (volOi < RIPTIDE_PARAMS.minVolOiRatio || volOi > RIPTIDE_PARAMS.maxVolOiRatio) return { pass: false };
+
+  // Option price filter
+  const optionAsk = parseFloat(alert.ask || 0);
+  if (optionAsk > 0 && (optionAsk < RIPTIDE_PARAMS.minOptionPrice || optionAsk > RIPTIDE_PARAMS.maxOptionPrice)) return { pass: false };
 
   if (RIPTIDE_PARAMS.excludeIndexes && INDEX_TICKERS.has(alert.ticker)) return { pass: false };
   if (!RIPTIDE_PARAMS.allowedTypes.includes(alert.type)) return { pass: false };
-  if (RIPTIDE_PARAMS.skipSweeps && alert.has_sweep) return { pass: false };
+  if (RIPTIDE_PARAMS.requireSweep && !alert.has_sweep) return { pass: false };
 
   if (alert.expiry) {
     const d = dte(alert.expiry);
@@ -685,12 +693,12 @@ async function processRiptideEntry(alert, enrichmentCache) {
   }
 
   // IV filters
-  if (!shortQuote.iv || shortQuote.iv === 0) {
-    console.log(`${LOG_PREFIX()} [riptide] SKIP (no IV data): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
+  if (RIPTIDE_PARAMS.minEntryIv > 0 && (!shortQuote.iv || shortQuote.iv < RIPTIDE_PARAMS.minEntryIv)) {
+    console.log(`${LOG_PREFIX()} [riptide] SKIP (IV too low: ${shortQuote.iv ? (shortQuote.iv * 100).toFixed(0) + '%' : 'N/A'}): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
     return null;
   }
-  if (shortQuote.iv < RIPTIDE_PARAMS.minEntryIv) {
-    console.log(`${LOG_PREFIX()} [riptide] SKIP (IV too low: ${(shortQuote.iv * 100).toFixed(0)}%): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
+  if (RIPTIDE_PARAMS.maxEntryIv > 0 && shortQuote.iv && shortQuote.iv > RIPTIDE_PARAMS.maxEntryIv) {
+    console.log(`${LOG_PREFIX()} [riptide] SKIP (IV too high: ${(shortQuote.iv * 100).toFixed(0)}%): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
     return null;
   }
 
@@ -1304,7 +1312,7 @@ async function main() {
   console.log(`${LOG_PREFIX()} Strategies: flow, riptide, yolo (per-cycle) | theta (every 30min)`);
   console.log(`${LOG_PREFIX()} Entry filters:`);
   console.log(`${LOG_PREFIX()}   Flow:    prem $${FLOW_PARAMS.minPremium/1000}K-$${FLOW_PARAMS.maxPremium/1000000}M, vol/OI ${FLOW_PARAMS.minVolOiRatio}-${FLOW_PARAMS.maxVolOiRatio}x, opt $${FLOW_PARAMS.minOptionPrice}-$${FLOW_PARAMS.maxOptionPrice}, DTE ${FLOW_PARAMS.minDte}-${FLOW_PARAMS.maxDte}, OTM ${FLOW_PARAMS.minOtmPct}-${FLOW_PARAMS.maxOtmPct}%, IV ${(FLOW_PARAMS.minEntryIv*100).toFixed(0)}-${(FLOW_PARAMS.maxEntryIv*100).toFixed(0)}%, ER within ${FLOW_PARAMS.earningsWindowDays}d, sweeps=${FLOW_PARAMS.requireSweep}, $${FLOW_PARAMS.maxPositionSize}/trade, max ${FLOW_PARAMS.maxOpenPositions}`);
-  console.log(`${LOG_PREFIX()}   Riptide: premium≥$${RIPTIDE_PARAMS.minPremium/1000}K, vol/OI≥${RIPTIDE_PARAMS.minVolOiRatio}x, DTE ${RIPTIDE_PARAMS.minDte}-${RIPTIDE_PARAMS.maxDte}, OTM ${RIPTIDE_PARAMS.minOtmPct}-${RIPTIDE_PARAMS.maxOtmPct}%, IV≥${(RIPTIDE_PARAMS.minEntryIv*100).toFixed(0)}%, credit≥$${RIPTIDE_PARAMS.minCreditPerContract}`);
+  console.log(`${LOG_PREFIX()}   Riptide: prem $${RIPTIDE_PARAMS.minPremium/1000}K-$${RIPTIDE_PARAMS.maxPremium/1000000}M, vol/OI ${RIPTIDE_PARAMS.minVolOiRatio}-${RIPTIDE_PARAMS.maxVolOiRatio}x, opt $${RIPTIDE_PARAMS.minOptionPrice}-$${RIPTIDE_PARAMS.maxOptionPrice}, DTE ${RIPTIDE_PARAMS.minDte}-${RIPTIDE_PARAMS.maxDte}, OTM ${RIPTIDE_PARAMS.minOtmPct}-${RIPTIDE_PARAMS.maxOtmPct}%, IV ${(RIPTIDE_PARAMS.minEntryIv*100).toFixed(0)}-${(RIPTIDE_PARAMS.maxEntryIv*100).toFixed(0)}%, sweeps=${RIPTIDE_PARAMS.requireSweep}, credit≥$${RIPTIDE_PARAMS.minCreditPerContract}, $${RIPTIDE_PARAMS.accountSize * RIPTIDE_PARAMS.maxRiskPct} max risk, max ${RIPTIDE_PARAMS.maxOpenPositions}`);
   console.log(`${LOG_PREFIX()}   Yolo:    prem $${YOLO_PARAMS.minPremium/1000}K-$${YOLO_PARAMS.maxPremium/1000000}M, vol/OI ${YOLO_PARAMS.minVolOiRatio}-${YOLO_PARAMS.maxVolOiRatio}x, opt $${YOLO_PARAMS.minOptionPrice}-$${YOLO_PARAMS.maxOptionPrice}, DTE ${YOLO_PARAMS.minDte}-${YOLO_PARAMS.maxDte}, OTM ${YOLO_PARAMS.minOtmPct}-${YOLO_PARAMS.maxOtmPct}%, IV ${(YOLO_PARAMS.minEntryIv*100).toFixed(0)}-${(YOLO_PARAMS.maxEntryIv*100).toFixed(0)}%, ER excl ${YOLO_PARAMS.earningsExclusionDays}d, $${YOLO_PARAMS.maxCostPerTrade}/trade, max ${YOLO_PARAMS.maxOpenPositions}`);
   console.log(`${LOG_PREFIX()}   Theta:   IV rank≥${(THETA_PARAMS.minIvRank*100).toFixed(0)}%, ER in ${THETA_PARAMS.minEarningsWindowDays}-${THETA_PARAMS.earningsWindowDays}d, condor ${(THETA_PARAMS.shortStrikeOtmPct*100).toFixed(0)}% OTM, wings $${THETA_PARAMS.wingWidth}`);
 
