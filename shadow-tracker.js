@@ -391,11 +391,10 @@ async function main() {
   console.log(`${LOG_PREFIX()} Cycle interval: ${CYCLE_INTERVAL_MS / 60000} min | Rate limit: ${RATE_LIMIT_MS}ms`);
 
   const state = loadShadowState();
-  const isFirstRun = !state.lastRun;
 
-  // Run initial cycle immediately
+  // Always do full backfill on startup to catch any gaps from downtime
   try {
-    await runCycle(state, isFirstRun);
+    await runCycle(state, true);
   } catch (e) {
     console.error(`${LOG_PREFIX()} Initial cycle error: ${e.message}`);
   }
