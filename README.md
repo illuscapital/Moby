@@ -37,25 +37,29 @@ Buy naked long options on stocks with unusual sweep flow ahead of earnings.
 | Pre-expiry | ER after option expiry and DTE ≤ 3 |
 | Emergency | DTE ≤ 1 |
 
-### 🌊 Riptide — Credit Spread Fade
+### 🌊 Riptide — Credit Spread Fade (Sweeps Only)
 
-Sell credit spreads against high-IV unusual flow. Inverse of Flow — profits from IV crush.
+Sell credit spreads against unusual sweep flow. Profits from IV crush and theta decay.
 
 | Parameter | Value |
 |---|---|
-| Min premium | $100,000 |
-| Min vol/OI ratio | 0 |
-| DTE range | 0–90 |
+| Option price | $0–$3 per share |
+| Premium range | $100K–$5M |
+| Vol/OI ratio | 0–10x |
+| IV range | 20–200% |
+| DTE range | 0–30 |
 | OTM range | 0–50% |
-| Min entry IV | 80% |
 | Min IV percentile | 60th |
-| Earnings exclusion | Skip if ER within 14 trading days |
-| Allowed types | Puts and calls |
+| Sweeps only | Yes |
+| Require single-leg | Yes |
+| Min ask-side premium | 15% |
+| Exclude indexes | Yes |
+| Earnings exclusion | None |
 | Spread width | $2.50 (strike ≤ $50), $5.00 (strike > $50) |
 | Min credit/contract | $1.50 |
 | Min credit/width ratio | 25% |
-| Account size / max risk | $100,000 / 5% per trade ($5,000) |
-| Max open positions | 5 |
+| Max risk per trade | $500 |
+| Max open positions | 50 |
 
 **Exit rules (priority order):**
 
