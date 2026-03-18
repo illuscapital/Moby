@@ -16,25 +16,30 @@ const TRADES_FILE = path.join(DATA_DIR, 'trades.jsonl');
 // ─── Strategy Parameters ───
 const PARAMS = {
   // Entry filters
-  minPremium: 200000,
-  minVolOiRatio: 5,
-  maxDte: 45,
-  minDte: 5,
-  minOtmPct: 2,
-  maxOtmPct: 15,
+  minPremium: 100000,
+  maxPremium: 5000000,
+  minVolOiRatio: 0,
+  maxVolOiRatio: 50,
+  maxDte: 90,
+  minDte: 15,
+  minOtmPct: 0,
+  maxOtmPct: 20,
+  minOptionPrice: 0,
+  maxOptionPrice: 3.00,         // per-share option price ($0-$3)
   requireEarnings: true,
-  earningsWindowDays: 10,       // trading days
+  earningsWindowDays: 14,       // trading days
   excludeIndexes: true,
   requireSingleLeg: true,
+  requireSweep: true,
   minAskSidePct: 0.70,
 
   // IV filters
-  maxEntryIv: 0.80,             // reject if IV > 80% (backtest: skip >80% + NO_DATA = +$7,942 vs ($3,573))
-  minEntryIv: 0.15,             // reject if IV < 15% (no real volatility priced in)
+  maxEntryIv: 0.70,
+  minEntryIv: 0,
 
   // Position sizing
-  maxPositionSize: 5000,        // $5K per trade
-  maxOpenPositions: 10,
+  maxPositionSize: 500,         // $500 per trade
+  maxOpenPositions: 50,
 
   // Dark pool confirmation — boost position size when DP confirms direction
   dpConfirmMinPrints: 50,          // need at least 50 recent prints to consider
@@ -220,10 +225,14 @@ function filterAlert(alert) {
   const reasons = [];
 
   const premium = parseFloat(alert.total_premium || 0);
-  if (premium < PARAMS.minPremium) return { pass: false };
+  if (premium < PARAMS.minPremium || premium > PARAMS.maxPremium) return { pass: false };
 
   const volOi = parseFloat(alert.volume_oi_ratio || 0);
-  if (volOi < PARAMS.minVolOiRatio) return { pass: false };
+  if (volOi < PARAMS.minVolOiRatio || volOi > PARAMS.maxVolOiRatio) return { pass: false };
+
+  // Option price filter (per-share ask price from alert)
+  const optionAsk = parseFloat(alert.ask || 0);
+  if (optionAsk > 0 && (optionAsk < PARAMS.minOptionPrice || optionAsk > PARAMS.maxOptionPrice)) return { pass: false };
 
   if (PARAMS.excludeIndexes && INDEX_TICKERS.has(alert.ticker)) return { pass: false };
 
@@ -263,6 +272,8 @@ function filterAlert(alert) {
   }
 
   if (PARAMS.requireSingleLeg && alert.has_multileg) return { pass: false };
+
+  if (PARAMS.requireSweep && !alert.has_sweep) return { pass: false };
 
   const askPrem = parseFloat(alert.total_ask_side_prem || 0);
   if (premium > 0 && (askPrem / premium) < PARAMS.minAskSidePct) return { pass: false };

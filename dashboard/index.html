@@ -63,6 +63,12 @@
   .research-filters { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-top: 16px; }
   .research-filters .filter-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px 32px; }
   .research-filters .filter-row { display: flex; flex-direction: column; gap: 4px; }
+  .research-filters .filter-row .slider-row { display: flex; align-items: center; gap: 8px; }
+  .research-filters .filter-row .slider-wrap { flex: 1; min-width: 0; }
+  .research-filters .filter-row .all-label { display: flex; align-items: center; gap: 3px; cursor: pointer; white-space: nowrap; font-size: 11px; color: var(--fg2); text-transform: none; }
+  .research-filters .filter-row .all-label input { cursor: pointer; }
+  .research-filters .slider-disabled .noUi-connect { background: var(--fg3); }
+  .research-filters .slider-disabled .noUi-handle { cursor: default; background: var(--bg3); }
   .research-filters label { color: var(--fg2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
   .research-filters .filter-val { color: var(--fg); font-size: 12px; font-weight: 600; }
   .research-filters .checkbox-row { display: flex; gap: 20px; margin-top: 12px; align-items: center; }
@@ -75,6 +81,11 @@
   .research-summary { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin: 16px 0; }
 
   /* Optimizer */
+  .page-controls { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+  .page-btn { background: var(--bg3); color: var(--fg); border: 1px solid var(--border); padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px; }
+  .page-btn:hover { background: var(--border); }
+  .page-btn:disabled { opacity: 0.3; cursor: default; }
+  .page-info { color: var(--fg2); font-size: 12px; }
   .opt-btn { background: var(--purple); color: #fff; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 600; margin-left: 16px; }
   .opt-btn:hover { opacity: 0.85; }
   .opt-btn:disabled { opacity: 0.5; cursor: wait; }
@@ -97,7 +108,6 @@
 <div class="header">
   <h1><span>🐋</span> Moby Dashboard</h1>
   <div class="meta">
-    <label style="margin-right:16px;cursor:pointer;"><input type="checkbox" id="ivFilter" style="margin-right:4px;cursor:pointer;">Exclude IV &gt; 80%</label>
     <span class="refresh-dot"></span>Auto-refresh 30s &mdash; <span id="lastUpdate">—</span><span id="epochBadge"></span>
   </div>
 </div>
@@ -169,19 +179,6 @@ document.querySelectorAll('.tab').forEach(tab => {
   });
 });
 
-// IV filter — persist in localStorage, re-render on toggle
-const ivCheckbox = $('ivFilter');
-ivCheckbox.checked = localStorage.getItem('moby_iv_filter') === 'true';
-ivCheckbox.addEventListener('change', () => {
-  localStorage.setItem('moby_iv_filter', ivCheckbox.checked);
-  refresh();
-});
-
-function filterByIv(positions) {
-  if (!ivCheckbox.checked) return positions || [];
-  return (positions || []).filter(p => !p.entryIv || p.entryIv <= 0.80);
-}
-
 function recomputeStats(open, closed) {
   let wins = 0, losses = 0, totalPnl = 0, unrealized = 0;
   for (const p of closed) {
@@ -194,10 +191,11 @@ function recomputeStats(open, closed) {
 
 function renderStratCard(el, name, emoji, stats) {
   const wr = (stats.wins + stats.losses) > 0 ? ((stats.wins / (stats.wins + stats.losses)) * 100).toFixed(1) : '—';
+  const totalPl = stats.totalPnl + stats.unrealized;
   el.innerHTML = `
     <div class="strat-header">
       <span class="strat-name">${emoji} ${name}</span>
-      <span class="strat-badge">${stats.openCount} open</span>
+      <span class="strat-name ${pnlClass(totalPl)}">${pnl(totalPl)}</span>
     </div>
     <div class="strat-row"><span class="k">Realized</span><span class="${pnlClass(stats.totalPnl)}">${pnl(stats.totalPnl)}</span></div>
     <div class="strat-row"><span class="k">Unrealized</span><span class="${pnlClass(stats.unrealized)}">${pnl(stats.unrealized)}</span></div>
@@ -403,11 +401,12 @@ function fmtTs(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
   if (isNaN(d)) return iso.slice(0, 10);
+  const yy = String(d.getFullYear()).slice(2);
   const mm = String(d.getMonth()+1).padStart(2,'0');
   const dd = String(d.getDate()).padStart(2,'0');
   const hh = String(d.getHours()).padStart(2,'0');
   const mi = String(d.getMinutes()).padStart(2,'0');
-  return `${mm}/${dd} ${hh}:${mi}`;
+  return `${mm}/${dd}/${yy} ${hh}:${mi}`;
 }
 
 function renderTradeLog(flow, riptide, theta, yolo) {
@@ -448,12 +447,14 @@ let researchData = null;
 let researchLoaded = false;
 
 const RESEARCH_DEFAULTS = {
+  priceMin: 0, priceMax: 50,
   premiumMin: 0, premiumMax: 5000000,
   volOiMin: 0, volOiMax: 200,
   ivMin: 0, ivMax: 200,
   dteMin: 0, dteMax: 700,
   otmMin: 0, otmMax: 100,
-  requireEarnings: false, excludeIndexes: true, sweepsOnly: false,
+  allPrice: true, allPremium: true, allVolOi: true, allIv: true, allDte: true, allOtm: true, allAskSide: true,
+  requireEarnings: false, excludeIndexes: true, sweepsOnly: false, singleLegOnly: false, askSideMin: 0, showActive: true, showExpired: true, showInvalid: true,
 };
 
 function getResearchFilters() {
@@ -474,17 +475,150 @@ function setResearchFilter(k, v) {
 
 function filterResearchAlerts(alerts, f) {
   return alerts.filter(a => {
-    if (a.premium < f.premiumMin || a.premium > f.premiumMax) return false;
-    if (a.volOi < f.volOiMin || a.volOi > f.volOiMax) return false;
-    const ivPct = a.iv * 100;
-    if (ivPct < f.ivMin || ivPct > f.ivMax) return false;
-    if (a.dte < f.dteMin || a.dte > f.dteMax) return false;
-    if (a.otmPct < f.otmMin || a.otmPct > f.otmMax) return false;
+    if (!f.allPrice) {
+      const price = a.entryAsk > 0 ? a.entryAsk : (a.entryPrice || 0);
+      if (price < f.priceMin || price > f.priceMax) return false;
+    }
+    if (!f.allPremium) {
+      if (a.premium < f.premiumMin || a.premium > f.premiumMax) return false;
+    }
+    if (!f.allVolOi) {
+      if (a.volOi < f.volOiMin || a.volOi > f.volOiMax) return false;
+    }
+    if (!f.allIv) {
+      const ivPct = a.iv * 100;
+      if (ivPct < f.ivMin || ivPct > f.ivMax) return false;
+    }
+    if (!f.allDte) {
+      if (a.dte < f.dteMin || a.dte > f.dteMax) return false;
+    }
+    if (!f.allOtm) {
+      if (a.otmPct < f.otmMin || a.otmPct > f.otmMax) return false;
+    }
     if (f.requireEarnings && !a.hasEarnings) return false;
     if (f.excludeIndexes && a.isIndex) return false;
     if (f.sweepsOnly && !a.isSweep) return false;
+    if (f.singleLegOnly && !a.isSingleLeg) return false;
+    if (!f.allAskSide && f.askSideMin > 0 && (a.askSidePct || 0) < f.askSideMin / 100) return false;
+    const isInvalid = a.lastPrice === null || a.lastPrice === undefined;
+    if (isInvalid) return f.showInvalid;
+    if (!f.showActive && a.status === 'active') return false;
+    if (!f.showExpired && a.status === 'expired') return false;
     return true;
   });
+}
+
+let researchSorted = [];
+let researchPage = 0;
+const RESEARCH_PAGE_SIZE = 100;
+let researchSortCol = null;
+let researchSortDir = 'desc'; // 'asc' or 'desc'
+
+const RESEARCH_COLUMNS = [
+  { key: 'ticker', label: 'Ticker', type: 'string' },
+  { key: 'alertTime', label: 'Open Date', type: 'string' },
+  { key: 'type', label: 'Type', type: 'string' },
+  { key: 'strike', label: 'Strike', type: 'number' },
+  { key: 'entryPrice', label: 'Entry', type: 'number', get: a => a.entryAsk > 0 ? a.entryAsk : (a.entryPrice || 0) },
+  { key: 'lastPrice', label: 'Last/Exit', type: 'number', get: a => a.lastPrice || 0 },
+  { key: 'expiry', label: 'Expiry', type: 'string' },
+  { key: 'simulatedPnl', label: 'PnL', type: 'number', get: a => a.simulatedPnl || 0 },
+  { key: 'simulatedPnlPct', label: 'PnL%', type: 'number', get: a => a.simulatedPnlPct || 0 },
+  { key: 'premium', label: 'Premium', type: 'number' },
+  { key: 'volOi', label: 'Vol/OI', type: 'number' },
+  { key: 'iv', label: 'IV', type: 'number' },
+  { key: 'dte', label: 'DTE', type: 'number' },
+  { key: 'otmPct', label: 'OTM%', type: 'number' },
+  { key: 'earningsDate', label: 'ER', type: 'string', get: a => a.hasEarnings ? a.earningsDate : '' },
+  { key: 'status', label: 'Status', type: 'string' },
+];
+
+function sortResearch(colIdx) {
+  const col = RESEARCH_COLUMNS[colIdx];
+  if (researchSortCol === colIdx) {
+    researchSortDir = researchSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    researchSortCol = colIdx;
+    researchSortDir = col.type === 'number' ? 'desc' : 'asc';
+  }
+  const getter = col.get || (a => a[col.key] ?? (col.type === 'number' ? 0 : ''));
+  researchSorted.sort((a, b) => {
+    let va = getter(a), vb = getter(b);
+    if (col.type === 'number') {
+      return researchSortDir === 'asc' ? va - vb : vb - va;
+    }
+    va = String(va || ''); vb = String(vb || '');
+    return researchSortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+  });
+  researchPage = 0;
+  renderResearchPage();
+}
+
+function renderResearchPage() {
+  const wrap = document.getElementById('researchTableWrap');
+  const controls = document.getElementById('researchPageControls');
+  if (!wrap || !researchSorted.length) return;
+
+  const totalPages = Math.ceil(researchSorted.length / RESEARCH_PAGE_SIZE);
+  if (researchPage >= totalPages) researchPage = totalPages - 1;
+  if (researchPage < 0) researchPage = 0;
+
+  const start = researchPage * RESEARCH_PAGE_SIZE;
+  const end = Math.min(start + RESEARCH_PAGE_SIZE, researchSorted.length);
+  const page = researchSorted.slice(start, end);
+
+  const arrow = i => researchSortCol === i ? (researchSortDir === 'asc' ? ' ▲' : ' ▼') : '';
+  const thStyle = 'cursor:pointer;user-select:none;';
+  let html = `<table>
+    <tr>${RESEARCH_COLUMNS.map((c, i) => `<th style="${thStyle}" onclick="sortResearch(${i})">${c.label}${arrow(i)}</th>`).join('')}</tr>`;
+  for (const a of page) {
+    const entryVal = a.entryAsk > 0 ? a.entryAsk : (a.entryPrice > 0 ? a.entryPrice : 0);
+    const entryStr = entryVal > 0 ? `$${entryVal.toFixed(2)}` : '—';
+    const lastStr = a.lastPrice !== null && a.lastPrice !== undefined ? `$${a.lastPrice.toFixed(2)}` : '—';
+    const pnlStr = a.simulatedPnl !== null ? pnl(a.simulatedPnl) : '—';
+    const pnlPctStr = a.simulatedPnlPct !== null ? pct(a.simulatedPnlPct) : '—';
+    const pnlCls = a.simulatedPnl !== null ? pnlClass(a.simulatedPnl) : '';
+    const premStr = a.premium >= 1000 ? '$' + (a.premium/1000).toFixed(0) + 'K' : '$' + a.premium.toFixed(0);
+    const isInv = a.lastPrice === null || a.lastPrice === undefined;
+    const statusBadge = isInv ? '<span style="color:var(--yellow)">invalid</span>' : a.status === 'expired' ? '<span style="color:var(--fg3)">expired</span>' : a.status === 'active' ? '<span style="color:var(--green)">active</span>' : '<span style="color:var(--fg3)">—</span>';
+    const yahooUrl = a.optionSymbol ? `https://finance.yahoo.com/quote/${a.optionSymbol}/` : `https://finance.yahoo.com/quote/${a.ticker}/`;
+    const alertTimeStr = a.alertTime ? fmtTs(a.alertTime) : a.alertDate || '—';
+    html += `<tr>
+      <td><a href="${yahooUrl}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-weight:600;">${a.ticker}</a></td>
+      <td>${alertTimeStr}</td>
+      <td>${(a.type||'').toUpperCase()}</td>
+      <td>$${a.strike}</td>
+      <td>${entryStr}</td>
+      <td>${lastStr}</td>
+      <td>${a.expiry}</td>
+      <td class="${pnlCls}">${pnlStr}</td>
+      <td class="${pnlCls}">${pnlPctStr}</td>
+      <td>${premStr}</td>
+      <td>${a.volOi.toFixed(1)}</td>
+      <td>${(a.iv * 100).toFixed(0)}%</td>
+      <td>${a.dte}</td>
+      <td>${a.otmPct.toFixed(1)}%</td>
+      <td>${a.hasEarnings ? a.earningsDate : '—'}</td>
+      <td>${statusBadge}</td>
+    </tr>`;
+  }
+  html += '</table>';
+  wrap.innerHTML = html;
+
+  // Page controls
+  if (controls) {
+    controls.innerHTML = `<div class="page-controls">
+      <button class="page-btn" id="pgFirst" ${researchPage === 0 ? 'disabled' : ''}>« First</button>
+      <button class="page-btn" id="pgPrev" ${researchPage === 0 ? 'disabled' : ''}>‹ Prev</button>
+      <span class="page-info">Page ${researchPage + 1} of ${totalPages} (${start + 1}–${end} of ${researchSorted.length})</span>
+      <button class="page-btn" id="pgNext" ${researchPage >= totalPages - 1 ? 'disabled' : ''}>Next ›</button>
+      <button class="page-btn" id="pgLast" ${researchPage >= totalPages - 1 ? 'disabled' : ''}>Last »</button>
+    </div>`;
+    document.getElementById('pgFirst')?.addEventListener('click', () => { researchPage = 0; renderResearchPage(); });
+    document.getElementById('pgPrev')?.addEventListener('click', () => { researchPage--; renderResearchPage(); });
+    document.getElementById('pgNext')?.addEventListener('click', () => { researchPage++; renderResearchPage(); });
+    document.getElementById('pgLast')?.addEventListener('click', () => { researchPage = totalPages - 1; renderResearchPage(); });
+  }
 }
 
 function renderResearchTab() {
@@ -509,21 +643,32 @@ function renderResearchTab() {
   const fmtPct = v => v + '%';
 
   const sliders = [
-    { label: 'Premium', keyMin: 'premiumMin', keyMax: 'premiumMax', min: 0, max: 5000000, step: 50000, fmt: fmtK },
-    { label: 'Vol/OI', keyMin: 'volOiMin', keyMax: 'volOiMax', min: 0, max: 200, step: 1, fmt: v => parseFloat(v).toFixed(1) },
-    { label: 'IV', keyMin: 'ivMin', keyMax: 'ivMax', min: 0, max: 200, step: 5, fmt: fmtPct },
-    { label: 'DTE', keyMin: 'dteMin', keyMax: 'dteMax', min: 0, max: 700, step: 1, fmt: v => Math.round(v) },
-    { label: 'OTM%', keyMin: 'otmMin', keyMax: 'otmMax', min: 0, max: 100, step: 1, fmt: fmtPct },
+    { label: 'Option Price', keyMin: 'priceMin', keyMax: 'priceMax', allKey: 'allPrice', min: 0, max: 50, step: 0.5, fmt: v => '$' + parseFloat(v).toFixed(2) },
+    { label: 'Premium', keyMin: 'premiumMin', keyMax: 'premiumMax', allKey: 'allPremium', min: 0, max: 5000000, step: 50000, fmt: fmtK },
+    { label: 'Vol/OI', keyMin: 'volOiMin', keyMax: 'volOiMax', allKey: 'allVolOi', min: 0, max: 200, step: 1, fmt: v => parseFloat(v).toFixed(1) },
+    { label: 'IV', keyMin: 'ivMin', keyMax: 'ivMax', allKey: 'allIv', min: 0, max: 200, step: 5, fmt: fmtPct },
+    { label: 'DTE', keyMin: 'dteMin', keyMax: 'dteMax', allKey: 'allDte', min: 0, max: 700, step: 5, fmt: v => Math.round(v) },
+    { label: 'OTM%', keyMin: 'otmMin', keyMax: 'otmMax', allKey: 'allOtm', min: 0, max: 100, step: 1, fmt: fmtPct },
+    { label: 'Ask Side %', keyMin: 'askSideMin', keyMax: null, allKey: 'allAskSide', min: 0, max: 100, step: 5, fmt: fmtPct },
   ];
 
   let html = `<div class="research-filters">
     <div class="filter-grid">`;
   for (const s of sliders) {
     const lo = f[s.keyMin];
-    const hi = f[s.keyMax];
+    const hi = s.keyMax ? f[s.keyMax] : null;
+    const isAll = f[s.allKey];
+    const labelHtml = s.keyMax
+      ? `${s.label}: <span class="filter-val" id="rv-${s.keyMin}">${s.fmt(lo)}</span> — <span class="filter-val" id="rv-${s.keyMax}">${s.fmt(hi)}</span>`
+      : `${s.label} ≥ <span class="filter-val" id="rv-${s.keyMin}">${s.fmt(lo)}</span>`;
     html += `<div class="filter-row">
-        <label>${s.label}: <span class="filter-val" id="rv-${s.keyMin}">${s.fmt(lo)}</span> — <span class="filter-val" id="rv-${s.keyMax}">${s.fmt(hi)}</span></label>
-        <div id="slider-${s.keyMin}" style="margin:12px 0 6px;"></div>
+        <label>${labelHtml}</label>
+        <div class="slider-row">
+          <div class="slider-wrap${isAll ? ' slider-disabled' : ''}" id="slider-wrap-${s.keyMin}">
+            <div id="slider-${s.keyMin}" style="margin:12px 0 6px;"></div>
+          </div>
+          <label class="all-label"><input type="checkbox" id="all-${s.allKey}" ${isAll ? 'checked' : ''}> All</label>
+        </div>
       </div>`;
   }
   html += `</div>
@@ -531,6 +676,10 @@ function renderResearchTab() {
       <label><input type="checkbox" id="rf-requireEarnings" ${f.requireEarnings ? 'checked' : ''}> Require Earnings</label>
       <label><input type="checkbox" id="rf-excludeIndexes" ${f.excludeIndexes ? 'checked' : ''}> Exclude Indexes</label>
       <label><input type="checkbox" id="rf-sweepsOnly" ${f.sweepsOnly ? 'checked' : ''}> Sweeps Only</label>
+      <label><input type="checkbox" id="rf-singleLegOnly" ${f.singleLegOnly ? 'checked' : ''}> Single Leg</label>
+      <label><input type="checkbox" id="rf-showActive" ${f.showActive ? 'checked' : ''}> Active</label>
+      <label><input type="checkbox" id="rf-showExpired" ${f.showExpired ? 'checked' : ''}> Expired</label>
+      <label><input type="checkbox" id="rf-showInvalid" ${f.showInvalid ? 'checked' : ''}> Invalid</label>
       <button class="opt-btn" id="runOptimizer">🔍 Optimize</button>
       <button class="opt-btn" id="hideOptimizer" style="background:var(--bg3);display:none;">✕ Hide</button>
     </div>
@@ -548,41 +697,12 @@ function renderResearchTab() {
     <div class="card"><div class="label">Avg PnL/Trade</div><div class="value ${pnlClass(avgPnl)}">${pnl(avgPnl)}</div></div>
   </div>`;
 
-  // Results table sorted by PnL
-  const sorted = [...filtered].sort((a, b) => (b.simulatedPnl || 0) - (a.simulatedPnl || 0));
-  html += `<div class="section-title">Results (${sorted.length})</div><div class="table-wrap"><table>
-    <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Expiry</th><th>Alert Time</th><th>Entry</th><th>Last/Exit</th><th>PnL</th><th>PnL%</th><th>Premium</th><th>Vol/OI</th><th>IV</th><th>DTE</th><th>OTM%</th><th>ER</th><th>Status</th></tr>`;
-  for (const a of sorted.slice(0, 500)) {
-    const entryStr = a.entryAsk > 0 ? `$${a.entryAsk.toFixed(2)}` : '—';
-    const lastStr = a.lastPrice !== null ? `$${a.lastPrice.toFixed(2)}` : '—';
-    const pnlStr = a.simulatedPnl !== null ? pnl(a.simulatedPnl) : '—';
-    const pnlPctStr = a.simulatedPnlPct !== null ? pct(a.simulatedPnlPct) : '—';
-    const pnlCls = a.simulatedPnl !== null ? pnlClass(a.simulatedPnl) : '';
-    const premStr = a.premium >= 1000 ? '$' + (a.premium/1000).toFixed(0) + 'K' : '$' + a.premium.toFixed(0);
-    const statusBadge = a.status === 'expired' ? '<span style="color:var(--fg3)">expired</span>' : a.status === 'active' ? '<span style="color:var(--green)">active</span>' : '<span style="color:var(--fg3)">—</span>';
-    const yahooUrl = a.optionSymbol ? `https://finance.yahoo.com/quote/${a.optionSymbol}/` : `https://finance.yahoo.com/quote/${a.ticker}/`;
-    const alertTimeStr = a.alertTime ? fmtTs(a.alertTime) : a.alertDate || '—';
-    html += `<tr>
-      <td><a href="${yahooUrl}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-weight:600;">${a.ticker}</a></td>
-      <td>${(a.type||'').toUpperCase()}</td>
-      <td>$${a.strike}</td>
-      <td>${a.expiry}</td>
-      <td>${alertTimeStr}</td>
-      <td>${entryStr}</td>
-      <td>${lastStr}</td>
-      <td class="${pnlCls}">${pnlStr}</td>
-      <td class="${pnlCls}">${pnlPctStr}</td>
-      <td>${premStr}</td>
-      <td>${a.volOi.toFixed(1)}</td>
-      <td>${(a.iv * 100).toFixed(0)}%</td>
-      <td>${a.dte}</td>
-      <td>${a.otmPct.toFixed(1)}%</td>
-      <td>${a.hasEarnings ? a.earningsDate : '—'}</td>
-      <td>${statusBadge}</td>
-    </tr>`;
-  }
-  if (sorted.length > 500) html += `<tr><td colspan="16" style="text-align:center;color:var(--fg2)">Showing 500 of ${sorted.length} results</td></tr>`;
-  html += '</table></div>';
+  // Results — store sorted for pagination, reset to page 1
+  researchPage = 0;
+  researchSorted = [...filtered].sort((a, b) => (b.simulatedPnl || 0) - (a.simulatedPnl || 0));
+  html += `<div class="section-title">Results (${researchSorted.length})</div>`;
+  html += '<div id="researchPageControls"></div>';
+  html += '<div id="researchTableWrap" class="table-wrap"></div>';
 
   $('tab-research').innerHTML = html;
 
@@ -590,28 +710,57 @@ function renderResearchTab() {
   for (const s of sliders) {
     const el = document.getElementById('slider-' + s.keyMin);
     if (!el || el.noUiSlider) continue;
-    noUiSlider.create(el, {
-      start: [f[s.keyMin], f[s.keyMax]],
-      connect: true,
-      range: { min: s.min, max: s.max },
-      step: s.step,
-    });
-    el.noUiSlider.on('update', (values) => {
-      const lo = parseFloat(values[0]);
-      const hi = parseFloat(values[1]);
-      const loEl = document.getElementById('rv-' + s.keyMin);
-      const hiEl = document.getElementById('rv-' + s.keyMax);
-      if (loEl) loEl.textContent = s.fmt(lo);
-      if (hiEl) hiEl.textContent = s.fmt(hi);
-    });
-    el.noUiSlider.on('change', (values) => {
-      setResearchFilter(s.keyMin, parseFloat(values[0]));
-      setResearchFilter(s.keyMax, parseFloat(values[1]));
-      renderResearchTab();
-    });
+    const isAll = f[s.allKey];
+    if (s.keyMax) {
+      noUiSlider.create(el, {
+        start: [f[s.keyMin], f[s.keyMax]],
+        connect: true,
+        range: { min: s.min, max: s.max },
+        step: s.step,
+      });
+      el.noUiSlider.on('update', (values) => {
+        const lo = parseFloat(values[0]);
+        const hi = parseFloat(values[1]);
+        const loEl = document.getElementById('rv-' + s.keyMin);
+        const hiEl = document.getElementById('rv-' + s.keyMax);
+        if (loEl) loEl.textContent = s.fmt(lo);
+        if (hiEl) hiEl.textContent = s.fmt(hi);
+      });
+      el.noUiSlider.on('change', (values) => {
+        setResearchFilter(s.keyMin, parseFloat(values[0]));
+        setResearchFilter(s.keyMax, parseFloat(values[1]));
+        renderResearchTab();
+      });
+    } else {
+      noUiSlider.create(el, {
+        start: [f[s.keyMin]],
+        connect: [true, false],
+        range: { min: s.min, max: s.max },
+        step: s.step,
+      });
+      el.noUiSlider.on('update', (values) => {
+        const loEl = document.getElementById('rv-' + s.keyMin);
+        if (loEl) loEl.textContent = s.fmt(parseFloat(values[0]));
+      });
+      el.noUiSlider.on('change', (values) => {
+        setResearchFilter(s.keyMin, parseFloat(values[0]));
+        renderResearchTab();
+      });
+    }
+    // Disable slider when "All" is checked
+    if (isAll) el.setAttribute('disabled', true);
+
+    // Wire up "All" checkbox
+    const allCb = document.getElementById('all-' + s.allKey);
+    if (allCb) {
+      allCb.addEventListener('change', () => {
+        setResearchFilter(s.allKey, allCb.checked);
+        renderResearchTab();
+      });
+    }
   }
 
-  const checks = ['requireEarnings', 'excludeIndexes', 'sweepsOnly'];
+  const checks = ['requireEarnings', 'excludeIndexes', 'sweepsOnly', 'singleLegOnly', 'showActive', 'showExpired', 'showInvalid'];
   for (const key of checks) {
     const el = document.getElementById('rf-' + key);
     if (el) {
@@ -645,6 +794,9 @@ function renderResearchTab() {
       hideBtn.style.display = 'none';
     });
   }
+
+  // Render first page of results
+  renderResearchPage();
 
   // Restore previous optimizer results
   if (lastOptimizerHtml) {
@@ -792,16 +944,7 @@ async function refresh() {
     ]);
 
     // Apply IV filter to all strategies
-    flow.openPositions = filterByIv(flow.openPositions);
-    flow.closedPositions = filterByIv(flow.closedPositions);
-    riptide.openPositions = filterByIv(riptide.openPositions);
-    riptide.closedPositions = filterByIv(riptide.closedPositions);
-    theta.openPositions = filterByIv(theta.openPositions);
-    theta.closedPositions = filterByIv(theta.closedPositions);
-    yolo.openPositions = filterByIv(yolo.openPositions);
-    yolo.closedPositions = filterByIv(yolo.closedPositions);
-
-    // Recompute stats from filtered data
+    // Recompute stats from data
     const flowStats = recomputeStats(flow.openPositions, flow.closedPositions);
     const riptideStats = recomputeStats(riptide.openPositions, riptide.closedPositions);
     const thetaStats = recomputeStats(theta.openPositions, theta.closedPositions);

@@ -27,7 +27,7 @@ process.on('unhandledRejection', (reason) => {
 const DATA_DIR = path.join(__dirname, 'data');
 const SHADOW_STATE_FILE = path.join(DATA_DIR, 'shadow-state.json');
 const CYCLE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
-const RATE_LIMIT_MS = 300;
+const RATE_LIMIT_MS = 600; // slower to avoid starving scanner of API quota
 const CLOSED_MARKET_SLEEP_MS = 5 * 60 * 1000;
 
 const INDEX_TICKERS = new Set(['SPX', 'SPXW', 'SPY', 'QQQ', 'IWM', 'DIA', 'XSP', 'VIX', 'NDX', 'RUT']);
@@ -168,7 +168,9 @@ function alertToShadowPosition(alert) {
       : ((underlying - strike) / underlying) * 100;
   }
 
-  const d = alert.expiry ? dte(alert.expiry) : 0;
+  // DTE from alert creation date, not from now
+  const alertCreated = alert.created_at ? new Date(alert.created_at) : new Date();
+  const d = alert.expiry ? Math.max(0, Math.round((new Date(alert.expiry + 'T16:00:00') - alertCreated) / 86400000)) : 0;
   const hasEarnings = !!alert.next_earnings_date;
 
   return {
@@ -178,6 +180,7 @@ function alertToShadowPosition(alert) {
     type: alert.type || 'call',
     strike,
     expiry: alert.expiry,
+    entryPrice: ask > 0 ? ask : mid,  // what you'd pay to enter (ask), fallback to mid
     entryBid: bid,
     entryAsk: ask,
     entryMid: mid,
@@ -234,20 +237,11 @@ async function runCycle(state, isFirstRun) {
   for (const pos of Object.values(state.positions)) {
     if (pos.status === 'active' && pos.expiry < todayStr) {
       pos.status = 'expired';
-      // Final PnL based on last known price (option expired, likely worthless or near it)
-      // Fixed $1000 allocation: contracts = floor($1000 / (ask * 100)); skip if too expensive
-      if (pos.entryAsk * 100 > 1000) {
-        pos.simulatedPnl = 0;
-        pos.simulatedPnlPct = 0;
-      } else if (pos.lastPrice !== null && pos.entryAsk > 0) {
-        const contracts = Math.floor(1000 / (pos.entryAsk * 100));
-        pos.simulatedPnl = (pos.lastPrice - pos.entryAsk) * 100 * contracts;
-        pos.simulatedPnlPct = (pos.lastPrice - pos.entryAsk) / pos.entryAsk * 100;
-      } else if (pos.entryAsk > 0) {
-        // Expired with no price data — assume worthless
-        const contracts = Math.floor(1000 / (pos.entryAsk * 100));
-        pos.simulatedPnl = -pos.entryAsk * 100 * contracts;
-        pos.simulatedPnlPct = -100;
+      // Only calculate PnL if we have a real lastPrice
+      if (pos.lastPrice !== null && pos.lastPrice !== undefined && pos.entryPrice > 0 && pos.entryPrice * 100 <= 5000) {
+        const contracts = Math.floor(5000 / (pos.entryPrice * 100));
+        pos.simulatedPnl = (pos.lastPrice - pos.entryPrice) * 100 * contracts;
+        pos.simulatedPnlPct = (pos.lastPrice - pos.entryPrice) / pos.entryPrice * 100;
       }
       expiredCount++;
     }
@@ -260,13 +254,32 @@ async function runCycle(state, isFirstRun) {
     if (!tickerGroups[pos.ticker]) tickerGroups[pos.ticker] = [];
     tickerGroups[pos.ticker].push(pos);
   }
-  console.log(`${LOG_PREFIX()} [shadow] Active: ${Object.values(state.positions).filter(p=>p.status==='active').length} | Expired: ${expiredCount} | Tickers to price: ${Object.keys(tickerGroups).length}`);
 
-  // Fetch prices grouped by ticker
+  // Sort tickers: prioritize those with unpriced short-DTE positions
+  const todayMs = Date.now();
+  const tickerPriority = (positions) => {
+    let minExpiry = Infinity;
+    for (const p of positions) {
+      if (p.lastPrice === null) {
+        const expiryMs = new Date(p.expiry).getTime();
+        if (expiryMs < minExpiry) minExpiry = expiryMs;
+      }
+    }
+    return minExpiry === Infinity ? todayMs + 365 * 86400000 : minExpiry;
+  };
+  const sortedTickers = Object.entries(tickerGroups)
+    .sort((a, b) => tickerPriority(a[1]) - tickerPriority(b[1]));
+
+  const urgentCount = sortedTickers.filter(([, positions]) =>
+    positions.some(p => p.lastPrice === null && (new Date(p.expiry).getTime() - todayMs) < 3 * 86400000)
+  ).length;
+  console.log(`${LOG_PREFIX()} [shadow] Active: ${Object.values(state.positions).filter(p=>p.status==='active').length} | Expired: ${expiredCount} | Tickers to price: ${sortedTickers.length} (${urgentCount} urgent DTE<3)`);
+
+  // Fetch prices grouped by ticker (short-DTE unpriced first)
   let tickerCount = 0;
   let pricedCount = 0;
 
-  for (const [ticker, positions] of Object.entries(tickerGroups)) {
+  for (const [ticker, positions] of sortedTickers) {
     tickerCount++;
 
     // Build set of option symbols we still need (unpriced or stale)
@@ -293,9 +306,9 @@ async function runCycle(state, isFirstRun) {
       const ask = parseFloat(c.nbbo_ask) || 0;
       const mid = bid > 0 && ask > 0 ? (bid + ask) / 2 : last;
 
-      if (last <= 0 && bid <= 0) continue;
+      if (last <= 0 && bid <= 0 && ask <= 0) continue;
 
-      pos.lastPrice = mid > 0 ? mid : last;
+      pos.lastPrice = mid > 0 ? mid : (last > 0 ? last : ask);
       pos.lastBid = bid;
       pos.lastAsk = ask;
       pos.lastUpdated = new Date().toISOString();
@@ -305,12 +318,12 @@ async function runCycle(state, isFirstRun) {
         pos.peakPrice = pos.lastPrice;
       }
 
-      // Simulated PnL: $1000 fixed allocation per trade; skip if too expensive
-      if (pos.entryAsk > 0 && pos.entryAsk * 100 <= 1000) {
-        const contracts = Math.floor(1000 / (pos.entryAsk * 100));
-        pos.simulatedPnl = (pos.lastPrice - pos.entryAsk) * 100 * contracts;
-        pos.simulatedPnlPct = (pos.lastPrice - pos.entryAsk) / pos.entryAsk * 100;
-      } else if (pos.entryAsk > 0) {
+      // Simulated PnL: $5000 fixed allocation per trade; skip if too expensive
+      if (pos.entryPrice > 0 && pos.entryPrice * 100 <= 5000) {
+        const contracts = Math.floor(5000 / (pos.entryPrice * 100));
+        pos.simulatedPnl = (pos.lastPrice - pos.entryPrice) * 100 * contracts;
+        pos.simulatedPnlPct = (pos.lastPrice - pos.entryPrice) / pos.entryPrice * 100;
+      } else if (pos.entryPrice > 0) {
         pos.simulatedPnl = 0;
         pos.simulatedPnlPct = 0;
       }
@@ -319,8 +332,56 @@ async function runCycle(state, isFirstRun) {
     }
   }
 
+  // ─── Targeted fallback: individually price positions that chain fetch missed ───
+  // Sort by expiry ascending so short-DTE get priced first before rate limits hit
+  const stillUnpriced = Object.values(state.positions).filter(
+    p => p.status === 'active' && p.lastPrice === null && p.optionSymbol && p.ticker
+  ).sort((a, b) => (a.expiry || '9999').localeCompare(b.expiry || '9999'));
+  let fallbackPriced = 0;
+  if (stillUnpriced.length > 0) {
+    console.log(`${LOG_PREFIX()} [shadow] Fallback: ${stillUnpriced.length} active positions still unpriced, fetching individually`);
+    for (const pos of stillUnpriced) {
+      try {
+        await sleep(RATE_LIMIT_MS);
+        const url = `https://api.unusualwhales.com/api/stock/${pos.ticker}/option-contracts?option_symbol=${pos.optionSymbol}`;
+        const result = await fetchJson(url);
+        const c = result?.data?.[0];
+        if (!c) continue;
+
+        const last = parseFloat(c.last_price) || 0;
+        const bid = parseFloat(c.nbbo_bid) || 0;
+        const ask = parseFloat(c.nbbo_ask) || 0;
+        const mid = bid > 0 && ask > 0 ? (bid + ask) / 2 : last;
+        if (last <= 0 && bid <= 0 && ask <= 0) continue;
+
+        pos.lastPrice = mid > 0 ? mid : (last > 0 ? last : ask);
+        pos.lastBid = bid;
+        pos.lastAsk = ask;
+        pos.lastUpdated = new Date().toISOString();
+        if (pos.peakPrice === null || pos.lastPrice > pos.peakPrice) {
+          pos.peakPrice = pos.lastPrice;
+        }
+        if (pos.entryPrice > 0 && pos.entryPrice * 100 <= 5000) {
+          const contracts = Math.floor(5000 / (pos.entryPrice * 100));
+          pos.simulatedPnl = (pos.lastPrice - pos.entryPrice) * 100 * contracts;
+          pos.simulatedPnlPct = (pos.lastPrice - pos.entryPrice) / pos.entryPrice * 100;
+        }
+        fallbackPriced++;
+      } catch (e) {
+        if (e.message === 'RATE_LIMITED') {
+          console.log(`${LOG_PREFIX()} [shadow] Fallback rate limited after ${fallbackPriced} — stopping`);
+          break;
+        }
+      }
+    }
+    if (fallbackPriced > 0) {
+      console.log(`${LOG_PREFIX()} [shadow] Fallback priced ${fallbackPriced} / ${stillUnpriced.length} positions`);
+      saveShadowState(state); // save progress even if rate limited
+    }
+  }
+
   const elapsed = ((Date.now() - cycleStart) / 1000).toFixed(1);
-  console.log(`${LOG_PREFIX()} Shadow cycle: ${tickerCount} tickers, ${pricedCount} alerts priced, ${expiredCount} expired, took ${elapsed}s`);
+  console.log(`${LOG_PREFIX()} Shadow cycle: ${tickerCount} tickers, ${pricedCount} chain-priced, ${fallbackPriced} fallback-priced, ${expiredCount} expired, took ${elapsed}s`);
 
   saveShadowState(state);
 }

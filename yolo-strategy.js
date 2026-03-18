@@ -18,26 +18,35 @@ const TRADES_FILE = path.join(DATA_DIR, 'yolo-trades.jsonl');
 
 // ─── Strategy Parameters ───
 const PARAMS = {
-  // Entry filters (same as Riptide)
+  // Entry filters (mirrors Flow, except earnings logic is inverted)
   minPremium: 100000,
-  minVolOiRatio: 3,
+  maxPremium: 5000000,
+  minVolOiRatio: 0,
+  maxVolOiRatio: 50,
   maxDte: 90,
-  minDte: 5,
-  minOtmPct: 10,
-  maxOtmPct: 30,
+  minDte: 15,
+  minOtmPct: 0,
+  maxOtmPct: 20,
+  minOptionPrice: 0,
+  maxOptionPrice: 3.00,           // per-share option price ($0-$3)
   excludeIndexes: true,
   requireSingleLeg: true,
   minAskSidePct: 0.70,
   allowedTypes: ['put', 'call'],
   skipSweeps: false,
-  minEntryIv: 0.60,
-  minIvPctl: 0.70,
-  earningsExclusionDays: 14,
+  minEntryIv: 0,
+  maxEntryIv: 0.70,
+  earningsExclusionDays: 14,      // ENTER only if no earnings OR earnings >= 14 trading days away
 
   // Position sizing
-  maxCostPerTrade: 5000,          // $5,000 per trade
-  maxOpenPositions: 10,
+  maxCostPerTrade: 500,           // $500 per trade
+  maxOpenPositions: 50,
   maxEntryDelta: 0.10,            // skip if our ask is > $0.10 above alert ask
+
+  // Dark pool confirmation — boost position size when DP confirms direction
+  dpConfirmMinPrints: 50,
+  dpConfirmMinNotional: 1000000,
+  dpConfirmSizeMultiplier: 1.5,
 
   // Exit rules
   profitTargetPct: 200,           // exit at 200% gain (option worth 3x entry)
@@ -197,10 +206,14 @@ async function getOptionPrice(ticker, optionSymbol) {
 // ─── Alert Filtering ───
 function filterAlert(alert) {
   const premium = parseFloat(alert.total_premium || 0);
-  if (premium < PARAMS.minPremium) return { pass: false };
+  if (premium < PARAMS.minPremium || premium > PARAMS.maxPremium) return { pass: false };
 
   const volOi = parseFloat(alert.volume_oi_ratio || 0);
-  if (volOi < PARAMS.minVolOiRatio) return { pass: false };
+  if (volOi < PARAMS.minVolOiRatio || volOi > PARAMS.maxVolOiRatio) return { pass: false };
+
+  // Option price filter (per-share ask price from alert)
+  const optionAsk = parseFloat(alert.ask || 0);
+  if (optionAsk > 0 && (optionAsk < PARAMS.minOptionPrice || optionAsk > PARAMS.maxOptionPrice)) return { pass: false };
 
   if (PARAMS.excludeIndexes && INDEX_TICKERS.has(alert.ticker)) return { pass: false };
 
@@ -222,10 +235,10 @@ function filterAlert(alert) {
     if (otmPct < PARAMS.minOtmPct || otmPct > PARAMS.maxOtmPct) return { pass: false };
   } else return { pass: false };
 
-  // Earnings exclusion
+  // Earnings: only enter if NO earnings date OR earnings >= 14 trading days away
   if (alert.next_earnings_date && PARAMS.earningsExclusionDays > 0) {
     const erBdays = tradingDaysBetween(new Date(), new Date(alert.next_earnings_date));
-    if (erBdays >= 0 && erBdays <= PARAMS.earningsExclusionDays) {
+    if (erBdays >= 0 && erBdays < PARAMS.earningsExclusionDays) {
       return { pass: false };
     }
   }
@@ -403,18 +416,17 @@ async function run() {
         }
 
         // IV filter
-        if (!quote.iv || quote.iv < PARAMS.minEntryIv) {
+        if (PARAMS.minEntryIv > 0 && (!quote.iv || quote.iv < PARAMS.minEntryIv)) {
           console.log(`  SKIP (IV too low: ${quote.iv ? (quote.iv * 100).toFixed(0) + '%' : 'N/A'}): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
           continue;
         }
-
-        // IV percentile check
-        const enrichment = enrichmentCache[sig.ticker] || {};
-        const ivPctl = enrichment._ivPctl || 0;
-        if (PARAMS.minIvPctl > 0 && ivPctl > 0 && ivPctl < PARAMS.minIvPctl) {
-          console.log(`  SKIP (IV pctl too low: ${(ivPctl * 100).toFixed(0)}%): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
+        if (PARAMS.maxEntryIv > 0 && quote.iv && quote.iv > PARAMS.maxEntryIv) {
+          console.log(`  SKIP (IV too high: ${(quote.iv * 100).toFixed(0)}% > ${(PARAMS.maxEntryIv * 100).toFixed(0)}%): ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry}`);
           continue;
         }
+
+        const enrichment = enrichmentCache[sig.ticker] || {};
+        const ivPctl = enrichment._ivPctl || 0;
 
         // Buy at the ask (worst-case entry)
         const entryPrice = quote.ask > 0 ? quote.ask : quote.price;
@@ -443,8 +455,14 @@ async function run() {
           }
         }
 
-        // Position sizing: $5,000 / cost per contract
-        const contracts = Math.max(1, Math.floor(PARAMS.maxCostPerTrade / costPerContract));
+        // Dark pool confirmation check
+        const dpPrintCount = enrichment._dpPrintCount || 0;
+        const dpNotional = enrichment._dpRecentNotional || 0;
+        const dpConfirmed = dpPrintCount >= PARAMS.dpConfirmMinPrints && dpNotional >= PARAMS.dpConfirmMinNotional;
+        const effectiveSize = dpConfirmed ? PARAMS.maxCostPerTrade * PARAMS.dpConfirmSizeMultiplier : PARAMS.maxCostPerTrade;
+
+        // Position sizing
+        const contracts = Math.max(1, Math.floor(effectiveSize / costPerContract));
         const totalCost = contracts * costPerContract;
 
         // Calculate theta guard exit date: entry + 2/3 of days to expiry

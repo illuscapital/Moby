@@ -5,25 +5,27 @@ Options trading system built on [Unusual Whales](https://unusualwhales.com) flow
 
 ## Strategies
 
-### 🐋 Flow — Pre-Earnings Directional
+### 🐋 Flow — Pre-Earnings Directional (Sweeps Only)
 
-Buy naked long options on stocks with unusual flow ahead of earnings.
+Buy naked long options on stocks with unusual sweep flow ahead of earnings.
 
 | Parameter | Value |
 |---|---|
-| Min premium | $200,000 |
-| Min vol/OI ratio | 5x |
-| DTE range | 5–45 |
-| OTM range | 2–15% |
-| IV range | 15–80% |
-| Earnings window | Within 10 trading days |
+| Option price | $0–$3 per share |
+| Premium range | $100K–$5M |
+| Vol/OI ratio | 0–50x |
+| IV range | 0–70% |
+| DTE range | 15–90 |
+| OTM range | 0–20% |
+| Earnings window | Required, within 14 trading days |
+| Sweeps only | Yes |
 | Require single-leg | Yes |
 | Min ask-side premium | 70% |
 | Exclude indexes | Yes (SPX, SPXW, SPY, QQQ, IWM, DIA, XSP, VIX, NDX, RUT) |
-| Position size | $5,000 per trade (1.5x with dark pool confirmation) |
-| Max open positions | 10 |
+| Position size | $500 per trade (1.5x with dark pool confirmation) |
+| Max open positions | 50 |
 
-**Dark pool confirmation:** If ticker has ≥ 50 recent prints and ≥ $1M notional, position size scales to 1.5x ($7,500).
+**Dark pool confirmation:** If ticker has ≥ 50 recent prints and ≥ $1M notional, position size scales to 1.5x ($750).
 
 **Exit rules:**
 
@@ -93,22 +95,25 @@ Sell iron condors around earnings when IV is elevated and no strong directional 
 | Stop loss | Loss ≥ 200% of credit received |
 | Post-earnings | Exit on ER day (BMO) or next business day (AMC) |
 
-### 🎲 Yolo — Follow the Whales
+### 🎲 Yolo — Follow the Whales (No Earnings)
 
-Buy the same option the whales are buying. Naked long, momentum-driven.
+Buy the same option the whales are buying. Naked long, momentum-driven. Same filters as Flow but inverted earnings logic — only enters when NO earnings or earnings ≥ 14 trading days away.
 
 | Parameter | Value |
 |---|---|
-| Min premium | $100,000 |
-| Min vol/OI ratio | 3x |
-| DTE range | 5–90 |
-| OTM range | 10–30% |
-| Min entry IV | 60% |
-| Min IV percentile | 70th |
-| Earnings exclusion | Skip if ER within 10 trading days |
+| Option price | $0–$3 per share |
+| Premium range | $100K–$5M |
+| Vol/OI ratio | 0–50x |
+| IV range | 0–70% |
+| DTE range | 15–90 |
+| OTM range | 0–20% |
+| Earnings | Missing or ≥ 14 trading days away |
+| Require single-leg | Yes |
+| Min ask-side premium | 70% |
+| Exclude indexes | Yes |
 | Max entry delta | $0.10 above alert ask price |
-| Position size | $5,000 per trade |
-| Max open positions | 10 |
+| Position size | $500 per trade (1.5x with dark pool confirmation) |
+| Max open positions | 50 |
 | Theta guard fraction | 2/3 of calendar days to expiry |
 
 **Exit rules:**

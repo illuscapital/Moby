@@ -20,7 +20,7 @@ const POLL_INTERVAL_MS = parseInt(process.env.SCANNER_POLL_INTERVAL_MS || '90000
 const RATE_LIMIT_MS = 300;
 const SEEN_ALERTS_FILE = path.join(DATA_DIR, 'seen-flow-alerts.json');
 const ENRICHMENT_FILE = path.join(DATA_DIR, 'enrichment-cache.json');
-const ENRICHMENT_MAX_AGE_MS = 30 * 60 * 1000;
+const ENRICHMENT_MAX_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours — IV/DP data doesn't move fast enough for 30min
 
 const LOG_PREFIX = () => `[${new Date().toISOString()}]`;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
