@@ -605,6 +605,7 @@ function renderResearchPage() {
       <td>${a.dte}</td>
       <td>${a.otmPct.toFixed(1)}%</td>
       <td>${a.hasEarnings ? a.earningsDate : '—'}</td>
+      <td>${a.daysToEr != null ? a.daysToEr : '—'}</td>
       <td>${statusBadge}</td>
     </tr>`;
   }
