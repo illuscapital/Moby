@@ -28,6 +28,7 @@ const DATA_DIR = path.join(__dirname, 'data');
 const SHADOW_STATE_FILE = path.join(DATA_DIR, 'shadow-state.json');
 const CYCLE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 const RATE_LIMIT_MS = 600; // slower to avoid starving scanner of API quota
+const SIM_ALLOCATION = 500; // $500 max spend per alert for PnL simulation
 const CLOSED_MARKET_SLEEP_MS = 5 * 60 * 1000;
 
 const INDEX_TICKERS = new Set(['SPX', 'SPXW', 'SPY', 'QQQ', 'IWM', 'DIA', 'XSP', 'VIX', 'NDX', 'RUT']);
@@ -238,8 +239,8 @@ async function runCycle(state, isFirstRun) {
     if (pos.status === 'active' && pos.expiry < todayStr) {
       pos.status = 'expired';
       // Only calculate PnL if we have a real lastPrice
-      if (pos.lastPrice !== null && pos.lastPrice !== undefined && pos.entryPrice > 0 && pos.entryPrice * 100 <= 5000) {
-        const contracts = Math.floor(5000 / (pos.entryPrice * 100));
+      if (pos.lastPrice !== null && pos.lastPrice !== undefined && pos.entryPrice > 0 && pos.entryPrice * 100 <= SIM_ALLOCATION) {
+        const contracts = Math.max(1, Math.floor(SIM_ALLOCATION / (pos.entryPrice * 100)));
         pos.simulatedPnl = (pos.lastPrice - pos.entryPrice) * 100 * contracts;
         pos.simulatedPnlPct = (pos.lastPrice - pos.entryPrice) / pos.entryPrice * 100;
       }
@@ -318,9 +319,9 @@ async function runCycle(state, isFirstRun) {
         pos.peakPrice = pos.lastPrice;
       }
 
-      // Simulated PnL: $5000 fixed allocation per trade; skip if too expensive
-      if (pos.entryPrice > 0 && pos.entryPrice * 100 <= 5000) {
-        const contracts = Math.floor(5000 / (pos.entryPrice * 100));
+      // Simulated PnL: $500 fixed allocation per trade; skip if too expensive
+      if (pos.entryPrice > 0 && pos.entryPrice * 100 <= SIM_ALLOCATION) {
+        const contracts = Math.max(1, Math.floor(SIM_ALLOCATION / (pos.entryPrice * 100)));
         pos.simulatedPnl = (pos.lastPrice - pos.entryPrice) * 100 * contracts;
         pos.simulatedPnlPct = (pos.lastPrice - pos.entryPrice) / pos.entryPrice * 100;
       } else if (pos.entryPrice > 0) {
@@ -361,8 +362,8 @@ async function runCycle(state, isFirstRun) {
         if (pos.peakPrice === null || pos.lastPrice > pos.peakPrice) {
           pos.peakPrice = pos.lastPrice;
         }
-        if (pos.entryPrice > 0 && pos.entryPrice * 100 <= 5000) {
-          const contracts = Math.floor(5000 / (pos.entryPrice * 100));
+        if (pos.entryPrice > 0 && pos.entryPrice * 100 <= SIM_ALLOCATION) {
+          const contracts = Math.max(1, Math.floor(SIM_ALLOCATION / (pos.entryPrice * 100)));
           pos.simulatedPnl = (pos.lastPrice - pos.entryPrice) * 100 * contracts;
           pos.simulatedPnlPct = (pos.lastPrice - pos.entryPrice) / pos.entryPrice * 100;
         }
