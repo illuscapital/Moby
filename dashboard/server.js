@@ -30,7 +30,12 @@ app.use(express.static(__dirname));
 function readState(file) {
   const fp = path.join(DATA_DIR, file);
   if (!fs.existsSync(fp)) return null;
-  return JSON.parse(fs.readFileSync(fp, 'utf8'));
+  try {
+    return JSON.parse(fs.readFileSync(fp, 'utf8'));
+  } catch (e) {
+    console.error(`Failed to parse ${file}: ${e.message}`);
+    return null;
+  }
 }
 
 /**

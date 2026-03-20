@@ -196,7 +196,7 @@ User lingering is enabled (`loginctl enable-linger`) so services persist across 
 | `*-trades.jsonl` | JSONL | Append-only trade log. Each line: `{action: 'OPEN'|'CLOSE', ...position, timestamp}`. Source of truth for P&L. |
 | `flow-YYYY-MM-DD.jsonl` | JSONL | Flow alerts from UW API, deduplicated by alert ID. Stamped with enrichment data (`_ivPctl`, `_dpRecentNotional`, etc.) when available at archive time. |
 | `screener-YYYY-MM-DD.jsonl` | JSONL | Option screener snapshots, collected every 30 minutes |
-| `enrichment-cache.json` | JSON | Per-ticker IV percentile (`_ivPctl`), dark pool stats (`_dpPrintCount`, `_dpRecentNotional`). 30-minute TTL. |
+| `enrichment-cache.json` | JSON | Per-ticker IV percentile (`_ivPctl`), dark pool stats (`_dpPrintCount`, `_dpRecentNotional`). 4-hour TTL. |
 | `shadow-state.json` | JSON | Shadow pricing for all flow alerts. Per-alert: entry/last/peak prices, simulated PnL, status (active/expired). Updated by `shadow-tracker.js`. |
 | `seen-flow-alerts.json` | JSON | Alert deduplication map (`alertId → date`). Pruned to 7-day window. |
 

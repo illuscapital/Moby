@@ -29,9 +29,17 @@ const INDEX_TICKERS = new Set(['SPX', 'SPXW', 'SPY', 'QQQ', 'IWM', 'DIA', 'XSP',
 
 // ─── Signal Notifications ───
 const SIGNAL_TARGET = process.env.SIGNAL_TARGET_UUID || '';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+if (SIGNAL_TARGET && !UUID_RE.test(SIGNAL_TARGET)) {
+  console.error(`${LOG_PREFIX()} WARNING: SIGNAL_TARGET_UUID does not look like a valid UUID: ${SIGNAL_TARGET}`);
+}
 
 function sendSignal(message) {
   if (!SIGNAL_TARGET) return;
+  if (!UUID_RE.test(SIGNAL_TARGET)) {
+    console.log(`${LOG_PREFIX()} [signal] Skipping — invalid UUID format`);
+    return;
+  }
   try {
     const { execSync } = require('child_process');
     execSync(`openclaw message send --channel signal -t "${SIGNAL_TARGET}" -m ${JSON.stringify(message)}`, { timeout: 15000, stdio: 'pipe' });
@@ -112,10 +120,13 @@ function isMarketHours() {
   return mins >= 570 && mins <= 960; // 9:30 - 16:00
 }
 
-function today() { return new Date().toISOString().slice(0, 10); }
+function today() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+}
 
 function dte(expiry) {
-  return Math.round((new Date(expiry + 'T16:00:00') - new Date()) / 86400000);
+  const expiryClose = new Date(expiry + "T16:00:00-05:00");
+  return Math.max(0, Math.round((expiryClose - Date.now()) / 86400000));
 }
 
 function tradingDaysBetween(d1, d2) {
@@ -162,6 +173,9 @@ function saveSeenAlerts(seenSet) {
   const arr = [...seenSet].slice(-20000);
   fs.writeFileSync(SEEN_ALERTS_FILE, JSON.stringify(arr));
 }
+
+// Module-scope seenAlerts so SIGTERM/SIGINT handlers can save current state
+let seenAlerts = new Set();
 
 // ─── Flow Alert Fetching (from collector.js) ───
 async function fetchFlowAlerts() {
@@ -243,16 +257,23 @@ async function collectScreener() {
 
   let newCount = 0;
   const fd = fs.openSync(outFile, 'a');
-  const allData = [...(calls.data || []), ...(puts.data || [])];
-  for (const rec of allData) {
+  for (const rec of (calls.data || [])) {
     if (!existingSymbols.has(rec.option_symbol)) {
-      fs.writeSync(fd, JSON.stringify({ ...rec, collected_at: new Date().toISOString(), type: calls.data?.includes(rec) ? 'call' : 'put' }) + '\n');
+      fs.writeSync(fd, JSON.stringify({ ...rec, collected_at: new Date().toISOString(), type: "call" }) + "\n");
+      existingSymbols.add(rec.option_symbol);
+      newCount++;
+    }
+  }
+  for (const rec of (puts.data || [])) {
+    if (!existingSymbols.has(rec.option_symbol)) {
+      fs.writeSync(fd, JSON.stringify({ ...rec, collected_at: new Date().toISOString(), type: "put" }) + "\n");
       existingSymbols.add(rec.option_symbol);
       newCount++;
     }
   }
   fs.closeSync(fd);
-  console.log(`${LOG_PREFIX()} [screener] ${allData.length} contracts, ${newCount} new`);
+  const totalData = (calls.data || []).length + (puts.data || []).length;
+  console.log(`${LOG_PREFIX()} [screener] ${totalData} contracts, ${newCount} new`);
 }
 
 // ─── Enrichment (from collector.js, runs periodically) ───
@@ -1325,7 +1346,7 @@ async function main() {
   console.log(`${LOG_PREFIX()}   Yolo:    prem $${YOLO_PARAMS.minPremium/1000}K-$${YOLO_PARAMS.maxPremium/1000000}M, vol/OI ${YOLO_PARAMS.minVolOiRatio}-${YOLO_PARAMS.maxVolOiRatio}x, opt $${YOLO_PARAMS.minOptionPrice}-$${YOLO_PARAMS.maxOptionPrice}, DTE ${YOLO_PARAMS.minDte}-${YOLO_PARAMS.maxDte}, OTM ${YOLO_PARAMS.minOtmPct}-${YOLO_PARAMS.maxOtmPct}%, IV ${(YOLO_PARAMS.minEntryIv*100).toFixed(0)}-${(YOLO_PARAMS.maxEntryIv*100).toFixed(0)}%, ER req ≥1d, $${YOLO_PARAMS.maxCostPerTrade}/trade, max ${YOLO_PARAMS.maxOpenPositions}`);
   console.log(`${LOG_PREFIX()}   Theta:   IV rank≥${(THETA_PARAMS.minIvRank*100).toFixed(0)}%, ER in ${THETA_PARAMS.minEarningsWindowDays}-${THETA_PARAMS.earningsWindowDays}d, condor ${(THETA_PARAMS.shortStrikeOtmPct*100).toFixed(0)}% OTM, wings $${THETA_PARAMS.wingWidth}`);
 
-  const seenAlerts = loadSeenAlerts();
+  seenAlerts = loadSeenAlerts();
   let enrichmentCache = loadEnrichmentCache();
   let cycleNum = 0;
   let lastScreenerRun = 0;
@@ -1399,13 +1420,23 @@ async function main() {
 // Save seen alerts on shutdown
 process.on('SIGTERM', () => {
   console.log(`${LOG_PREFIX()} SIGTERM received, saving state...`);
-  try { saveSeenAlerts(loadSeenAlerts()); } catch (e) {}
+  try { saveSeenAlerts(seenAlerts); } catch (e) {}
   process.exit(0);
 });
 process.on('SIGINT', () => {
   console.log(`${LOG_PREFIX()} SIGINT received, saving state...`);
-  try { saveSeenAlerts(loadSeenAlerts()); } catch (e) {}
+  try { saveSeenAlerts(seenAlerts); } catch (e) {}
   process.exit(0);
+});
+
+// ─── Crash handlers ───
+process.on('uncaughtException', (err) => {
+  console.error(`${LOG_PREFIX()} FATAL uncaughtException: ${err.stack || err.message || err}`);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error(`${LOG_PREFIX()} FATAL unhandledRejection: ${reason?.stack || reason}`);
+  process.exit(1);
 });
 
 main();

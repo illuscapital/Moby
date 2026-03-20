@@ -71,11 +71,12 @@ function isAfterExitWindow() {
 }
 
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 }
 
 function dte(expiry) {
-  return Math.round((new Date(expiry + 'T16:00:00') - new Date()) / 86400000);
+  const expiryClose = new Date(expiry + "T16:00:00-05:00");
+  return Math.max(0, Math.round((expiryClose - Date.now()) / 86400000));
 }
 
 function tradingDaysBetween(d1, d2) {
@@ -477,6 +478,8 @@ const THETA_PARAMS = {
 };
 
 function thetaShouldExit(pos, exitDebit) {
+  if (!pos.earningsDate) return { exit: false };
+
   const todayStr = today();
   const pnl = (pos.credit - exitDebit) * 100 * pos.contracts;
 
@@ -550,7 +553,7 @@ async function checkThetaPositions() {
     pos.unrealizedPnlPct = pnlPct;
     pos.lastMtm = new Date().toISOString();
 
-    const exitCheck = thetaShouldExit(pos, exitDebit);
+    const exitCheck = isAfterExitWindow() ? thetaShouldExit(pos, exitDebit) : { exit: false };
 
     if (exitCheck.exit) {
       const closedPos = {
