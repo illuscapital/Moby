@@ -45,11 +45,12 @@ function isMarketHours() {
 }
 
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
 function dte(expiry) {
-  return Math.round((new Date(expiry + 'T16:00:00') - new Date()) / 86400000);
+  const expiryClose = new Date(expiry + 'T16:00:00-05:00');
+  return Math.max(0, Math.round((expiryClose - Date.now()) / 86400000));
 }
 
 // ─── API ───
