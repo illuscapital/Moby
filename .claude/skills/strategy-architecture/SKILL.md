@@ -13,32 +13,37 @@ All entry logic lives in `scanner.js`. All exit logic lives in `exit-monitor.js`
 | Strategy | Style | Risk/Trade | Max Positions |
 |----------|-------|------------|---------------|
 | Flow | Directional earnings longs (sweeps only) | $500 (1.5x w/ DP) | 50 |
-| Riptide | Credit spread fades | $5K max risk | 5 |
+| Riptide | Credit spread fades (sweeps only) | $500 max risk | 50 |
 | Theta | Iron condors on earnings | $5K max risk | 5 |
-| Yolo | Follow whale flow (longs, no earnings) | $500 (1.5x w/ DP) | 50 |
+| Yolo | Follow whale flow (longs, sweeps, ER required) | $500 (1.5x w/ DP) | 50 |
 
 ## Flow — Directional Earnings (Sweeps Only)
-- Entry: option price $0–$3, premium $100K–$5M, vol/OI 0–50x, IV 0–70%, DTE 15–90, OTM 0–20%
-- Requires: earnings within 14 trading days, sweep order, single-leg, ask-side ≥70%, no indexes
+- Entry: option price $0–$3, premium $100K–$5M, vol/OI 0–50x, IV 0–70%, DTE 15–120, OTM 0–20%
+- Requires: earnings within 60 trading days, sweep order, single-leg, ask-side ≥70%, no indexes
 - Position: buy the option at ask price, $500/trade (1.5x with dark pool confirmation)
 - Exit: at earnings open (BMO/AMC), +175% profit, ≤3 DTE pre-expiry, ≤1 DTE emergency
 - No stop loss — position sizing is risk control
 
 ## Riptide — Credit Spread Fade
-- Entry: sell credit spreads against flow alerts, IV ≥80%, IV pctl ≥60th
+- Entry: sell credit spreads against flow alerts, IV 20–200%, IV pctl ≥60th, sweeps only
 - Spread: bull put (bearish flow) or bear call (bullish flow), dynamic width
-- Exit priority: moneyness → 3x stop → 50% profit → IV crush → time decay → earnings → DTE floor
-- Min credit $1.50/contract, earnings exclusion 14 days
+- Premium $100K–$5M, vol/OI 0–10x, option price $0–$3, DTE 0–30, OTM 0–50%
+- Exit priority: moneyness (2%) → 3x stop → 50% profit → IV crush (30%) → time decay (50%) → earnings (2d) → DTE floor (7)
+- Min credit $1.50/contract, min credit/width 25%, min ask-side 15%
+- Max risk per trade: $500 (account $10K × 5%)
+- Earnings exclusion: none (earningsExclusionDays: 0)
 
 ## Theta — Earnings Premium Selling
 - Entry: iron condors on earnings stocks, IV rank >50%, earnings 0–3 days
 - Structure: short strikes ~8% OTM, wings $5 or 3% further
+- Max bid/ask spread 15% on short strikes
 - Exit: at earnings open, 50% profit target, 200% stop
 
-## Yolo — Follow the Whales (No Earnings)
-- Entry: same filters as Flow but inverted earnings — only enters when NO earnings or earnings ≥14 trading days away
-- Option price $0–$3, premium $100K–$5M, vol/OI 0–50x, IV 0–70%, DTE 15–90, OTM 0–20%
+## Yolo — Follow the Whales (Earnings Required)
+- Entry: option price $0–$3, premium $100K–$5M, vol/OI 0–50x, IV 0–70%, DTE 15–120, OTM 0–20%
+- Requires: earnings date present and ≥1 trading day away, sweep order, single-leg, ask-side ≥70%, no indexes
 - Position: buy the option at ask price, $500/trade (1.5x with dark pool confirmation)
+- Max entry delta: $0.10 above alert ask price
 - Exit: -10% stop loss, 15% trailing stop from peak (profit only), theta guard at 2/3 time elapsed
 - No profit cap — let winners run
 
@@ -58,7 +63,7 @@ systemctl --user restart moby-scanner   # restart
 
 ## Data Flow
 ```
-UW API → scanner.js → flow-YYYY-MM-DD.jsonl (raw alerts)
+UW API → scanner.js → flow-YYYY-MM-DD.jsonl (raw alerts + enrichment stamps)
                     → screener-YYYY-MM-DD.jsonl (earnings data)
                     → enrichment-cache.json (IV pctl, dark pool)
                     → strategy-state.json + trades.jsonl (Flow)
@@ -70,6 +75,14 @@ UW API → scanner.js → flow-YYYY-MM-DD.jsonl (raw alerts)
        → shadow-tracker.js → shadow-state.json (Research page)
        → dashboard/server.js → reads all state + JSONL files (read-only)
 ```
+
+## Enrichment Data
+Scanner stamps enrichment data onto flow JSONL alerts at archive time:
+- `_ivPctl` — IV percentile (365d or 30d)
+- `_iv30` — 30-day implied volatility
+- `_dpRecentNotional` — dark pool notional (last 20 prints)
+- `_dpPrintCount` — dark pool print count
+- `_dpAvgPrintSize` — average dark pool print size
 
 ## State File Format
 ```json

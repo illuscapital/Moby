@@ -11,15 +11,16 @@ Pre-deploy checklist for pushing changes to the Moby repo.
 5. **Stage explicitly**: `git add <file1> <file2>` — NEVER `git add -A` or `git add .`
 6. **Commit**: descriptive message referencing what changed and why
 7. **Push**: `git push origin main`
-8. **Restart affected processes**:
-   - Dashboard: `pkill -f "Moby/dashboard/server.js"; sleep 1; cd Moby && setsid nohup node dashboard/server.js >> dashboard/dashboard.log 2>&1 &`
-   - Exit monitor: `pkill -f "yolo-exit-monitor.js"; sleep 1; cd Moby && setsid nohup node yolo-exit-monitor.js >> data/yolo-exit-monitor.log 2>&1 &`
-   - Cron strategies: no restart needed — next cron run picks up changes
-9. **Verify**: check dashboard loads, check exit monitor log
+8. **Restart affected processes** via systemctl:
+   - `systemctl --user restart moby-dashboard`
+   - `systemctl --user restart moby-scanner`
+   - `systemctl --user restart moby-exit-monitor`
+   - `systemctl --user restart moby-shadow-tracker`
+9. **Verify**: check dashboard loads, check scanner/exit-monitor logs
 
 ## Rollback
 ```bash
 git log --oneline -5
 git revert HEAD
-# Restart affected processes
+systemctl --user restart moby-scanner moby-exit-monitor moby-dashboard
 ```

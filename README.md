@@ -15,9 +15,9 @@ Buy naked long options on stocks with unusual sweep flow ahead of earnings.
 | Premium range | $100K–$5M |
 | Vol/OI ratio | 0–50x |
 | IV range | 0–70% |
-| DTE range | 15–90 |
+| DTE range | 15–120 |
 | OTM range | 0–20% |
-| Earnings window | Required, within 14 trading days |
+| Earnings window | Required, within 60 trading days |
 | Sweeps only | Yes |
 | Require single-leg | Yes |
 | Min ask-side premium | 70% |
@@ -99,9 +99,9 @@ Sell iron condors around earnings when IV is elevated and no strong directional 
 | Stop loss | Loss ≥ 200% of credit received |
 | Post-earnings | Exit on ER day (BMO) or next business day (AMC) |
 
-### 🎲 Yolo — Follow the Whales (No Earnings)
+### 🎲 Yolo — Follow the Whales (Sweeps + Earnings Required)
 
-Buy the same option the whales are buying. Naked long, momentum-driven. Same filters as Flow but inverted earnings logic — only enters when NO earnings or earnings ≥ 14 trading days away.
+Buy the same option the whales are buying. Naked long, momentum-driven. Requires an earnings date ≥ 1 trading day away and sweep orders.
 
 | Parameter | Value |
 |---|---|
@@ -109,9 +109,10 @@ Buy the same option the whales are buying. Naked long, momentum-driven. Same fil
 | Premium range | $100K–$5M |
 | Vol/OI ratio | 0–50x |
 | IV range | 0–70% |
-| DTE range | 15–90 |
+| DTE range | 15–120 |
 | OTM range | 0–20% |
-| Earnings | Missing or ≥ 14 trading days away |
+| Earnings | Required, ≥ 1 trading day away |
+| Sweeps only | Yes |
 | Require single-leg | Yes |
 | Min ask-side premium | 70% |
 | Exclude indexes | Yes |
