@@ -27,7 +27,7 @@ process.on('unhandledRejection', (reason) => {
 const DATA_DIR = path.join(__dirname, 'data');
 const SHADOW_STATE_FILE = path.join(DATA_DIR, 'shadow-state.json');
 const CYCLE_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
-const RATE_LIMIT_MS = 400; // balanced with scanner API quota
+const RATE_LIMIT_MS = 300; // match scanner rate limit
 const SIM_ALLOCATION = 500; // $500 max spend per alert for PnL simulation
 const CLOSED_MARKET_SLEEP_MS = 5 * 60 * 1000;
 
