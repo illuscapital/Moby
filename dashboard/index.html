@@ -490,7 +490,7 @@ const RESEARCH_DEFAULTS = {
   tradeCountMin: 0,
   requireEarnings: false, excludeIndexes: true, sweepsOnly: false, singleLegOnly: false, askSideMin: 0, showActive: true, showExpired: true, showInvalid: true,
   typeFilter: 'all', ruleFilter: 'all', sectorFilter: 'all', openingOnly: false,
-  dateFrom: '', dateTo: '',
+  dateFrom: '', dateTo: '', expiryFrom: '', expiryTo: '',
 };
 
 function getResearchFilters() {
@@ -551,10 +551,12 @@ function filterResearchAlerts(alerts, f) {
     if (f.openingOnly && !a.allOpeningTrades) return false;
     if (f.dateFrom && a.alertDate < f.dateFrom) return false;
     if (f.dateTo && a.alertDate > f.dateTo) return false;
+    if (f.expiryFrom && a.expiry < f.expiryFrom) return false;
+    if (f.expiryTo && a.expiry > f.expiryTo) return false;
     const isInvalid = a.lastPrice === null || a.lastPrice === undefined;
     if (isInvalid) return f.showInvalid;
     if (!f.showActive && a.status === 'active') return false;
-    if (!f.showExpired && a.status === 'expired') return false;
+    if (!f.showExpired && (a.status === 'expired' || a.status === 'terminal')) return false;
     return true;
   });
 }
@@ -639,7 +641,7 @@ function renderResearchPage() {
     const peakCls = a.peakPnlPct !== null ? pnlClass(a.peakPnlPct) : '';
     const premStr = a.premium >= 1000 ? '$' + (a.premium/1000).toFixed(0) + 'K' : '$' + a.premium.toFixed(0);
     const isInv = a.lastPrice === null || a.lastPrice === undefined;
-    const statusBadge = isInv ? '<span style="color:var(--yellow)">invalid</span>' : a.status === 'expired' ? '<span style="color:var(--fg3)">expired</span>' : a.status === 'active' ? '<span style="color:var(--green)">active</span>' : '<span style="color:var(--fg3)">—</span>';
+    const statusBadge = isInv ? '<span style="color:var(--yellow)">invalid</span>' : a.status === 'expired' ? '<span style="color:var(--fg3)">expired</span>' : a.status === 'terminal' ? '<span style="color:var(--red)">terminal</span>' : a.status === 'active' ? '<span style="color:var(--green)">active</span>' : '<span style="color:var(--fg3)">—</span>';
     const yahooUrl = a.optionSymbol ? `https://finance.yahoo.com/quote/${a.optionSymbol}/` : `https://finance.yahoo.com/quote/${a.ticker}/`;
     const alertTimeStr = a.alertTime ? fmtTs(a.alertTime) : a.alertDate || '—';
     const spreadStr = a.bidAskSpread !== null ? a.bidAskSpread.toFixed(1) + '%' : '—';
@@ -770,10 +772,15 @@ function renderResearchTab() {
           ${[...new Set(allAlerts.map(a => a.sector || 'Unknown'))].sort().map(s => `<option value="${s}"${f.sectorFilter === s ? ' selected' : ''}>${s}</option>`).join('')}
         </select>
       </label>
-      <label style="display:flex;align-items:center;gap:4px;text-transform:none;font-size:12px;color:var(--fg2);">Date Range:
+      <label style="display:flex;align-items:center;gap:4px;text-transform:none;font-size:12px;color:var(--fg2);">Alert Date:
         <input type="date" id="rf-dateFrom" value="${f.dateFrom}" style="background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit;font-size:11px;">
         <span style="color:var(--fg2);font-size:11px;">to</span>
         <input type="date" id="rf-dateTo" value="${f.dateTo}" style="background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit;font-size:11px;">
+      </label>
+      <label style="display:flex;align-items:center;gap:4px;text-transform:none;font-size:12px;color:var(--fg2);">Expiry:
+        <input type="date" id="rf-expiryFrom" value="${f.expiryFrom}" style="background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit;font-size:11px;">
+        <span style="color:var(--fg2);font-size:11px;">to</span>
+        <input type="date" id="rf-expiryTo" value="${f.expiryTo}" style="background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit;font-size:11px;">
       </label>
     </div>
     <div class="checkbox-row">
@@ -890,6 +897,10 @@ function renderResearchTab() {
   const dateToEl = document.getElementById('rf-dateTo');
   if (dateFromEl) dateFromEl.addEventListener('change', () => { setResearchFilter('dateFrom', dateFromEl.value); renderResearchTab(); });
   if (dateToEl) dateToEl.addEventListener('change', () => { setResearchFilter('dateTo', dateToEl.value); renderResearchTab(); });
+  const expiryFromEl = document.getElementById('rf-expiryFrom');
+  const expiryToEl = document.getElementById('rf-expiryTo');
+  if (expiryFromEl) expiryFromEl.addEventListener('change', () => { setResearchFilter('expiryFrom', expiryFromEl.value); renderResearchTab(); });
+  if (expiryToEl) expiryToEl.addEventListener('change', () => { setResearchFilter('expiryTo', expiryToEl.value); renderResearchTab(); });
 
   // Optimizer buttons
   const optBtn = document.getElementById('runOptimizer');

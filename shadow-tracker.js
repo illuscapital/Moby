@@ -26,8 +26,8 @@ process.on('unhandledRejection', (reason) => {
 
 const DATA_DIR = path.join(__dirname, 'data');
 const SHADOW_STATE_FILE = path.join(DATA_DIR, 'shadow-state.json');
-const CYCLE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
-const RATE_LIMIT_MS = 600; // slower to avoid starving scanner of API quota
+const CYCLE_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+const RATE_LIMIT_MS = 400; // balanced with scanner API quota
 const SIM_ALLOCATION = 500; // $500 max spend per alert for PnL simulation
 const CLOSED_MARKET_SLEEP_MS = 5 * 60 * 1000;
 
@@ -246,6 +246,23 @@ async function runCycle(state, isFirstRun) {
       }
       expiredCount++;
     }
+  }
+
+  // Freeze worthless active positions (≤$0.05) — stop repricing
+  let terminalCount = 0;
+  for (const pos of Object.values(state.positions)) {
+    if (pos.status === 'active' && pos.lastPrice !== null && pos.lastPrice <= 0.05) {
+      pos.status = 'terminal';
+      if (pos.entryPrice > 0 && pos.entryPrice * 100 <= SIM_ALLOCATION) {
+        const contracts = Math.max(1, Math.floor(SIM_ALLOCATION / (pos.entryPrice * 100)));
+        pos.simulatedPnl = (pos.lastPrice - pos.entryPrice) * 100 * contracts;
+        pos.simulatedPnlPct = (pos.lastPrice - pos.entryPrice) / pos.entryPrice * 100;
+      }
+      terminalCount++;
+    }
+  }
+  if (terminalCount > 0) {
+    console.log(`${LOG_PREFIX()} [shadow] Froze ${terminalCount} terminal positions (≤$0.05)`);
   }
 
   // Group active positions by ticker
