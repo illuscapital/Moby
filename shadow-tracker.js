@@ -326,17 +326,29 @@ async function runCycle(state, isFirstRun) {
     tickerGroups[pos.ticker].push(pos);
   }
 
-  // Sort tickers: prioritize those with unpriced short-DTE positions
+  // Sort tickers: 1) unpriced short-DTE (urgent), 2) stalest first (round-robin fairness)
   const todayMs = Date.now();
   const tickerPriority = (positions) => {
+    let hasUnpriced = false;
     let minExpiry = Infinity;
+    let oldestUpdate = Infinity; // lower = staler = higher priority
     for (const p of positions) {
       if (p.lastPrice === null) {
+        hasUnpriced = true;
         const expiryMs = new Date(p.expiry).getTime();
         if (expiryMs < minExpiry) minExpiry = expiryMs;
       }
+      if (p.lastUpdated) {
+        const updMs = new Date(p.lastUpdated).getTime();
+        if (updMs < oldestUpdate) oldestUpdate = updMs;
+      } else {
+        oldestUpdate = 0; // never updated = most stale
+      }
     }
-    return minExpiry === Infinity ? todayMs + 365 * 86400000 : minExpiry;
+    // Unpriced short-DTE get top priority (sort key = expiry timestamp)
+    // Everything else sorted by staleness (oldest update first)
+    if (hasUnpriced) return -1e15 + minExpiry; // negative = always first, sorted by expiry
+    return oldestUpdate; // older = lower number = higher priority
   };
   const sortedTickers = Object.entries(tickerGroups)
     .sort((a, b) => tickerPriority(a[1]) - tickerPriority(b[1]));
