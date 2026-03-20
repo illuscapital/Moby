@@ -193,9 +193,10 @@ User lingering is enabled (`loginctl enable-linger`) so services persist across 
 |---|---|---|
 | `*-state.json` | JSON | Open positions, closed positions (convenience copy), seen alert IDs, running stats |
 | `*-trades.jsonl` | JSONL | Append-only trade log. Each line: `{action: 'OPEN'|'CLOSE', ...position, timestamp}`. Source of truth for P&L. |
-| `flow-YYYY-MM-DD.jsonl` | JSONL | Raw flow alerts from UW API, deduplicated by alert ID |
+| `flow-YYYY-MM-DD.jsonl` | JSONL | Flow alerts from UW API, deduplicated by alert ID. Stamped with enrichment data (`_ivPctl`, `_dpRecentNotional`, etc.) when available at archive time. |
 | `screener-YYYY-MM-DD.jsonl` | JSONL | Option screener snapshots, collected every 30 minutes |
 | `enrichment-cache.json` | JSON | Per-ticker IV percentile (`_ivPctl`), dark pool stats (`_dpPrintCount`, `_dpRecentNotional`). 30-minute TTL. |
+| `shadow-state.json` | JSON | Shadow pricing for all flow alerts. Per-alert: entry/last/peak prices, simulated PnL, status (active/expired). Updated by `shadow-tracker.js`. |
 | `seen-flow-alerts.json` | JSON | Alert deduplication map (`alertId → date`). Pruned to 7-day window. |
 
 ## Architecture
@@ -255,15 +256,41 @@ User lingering is enabled (`loginctl enable-linger`) so services persist across 
 
 The standalone strategy files (`strategy.js`, `riptide-strategy.js`, `theta-strategy.js`, `yolo-strategy.js`, `collector.js`) are **deprecated**. All entry logic lives in `scanner.js`, all exit logic in `exit-monitor.js`. The old cron-based pipeline that called these files individually has been disabled. These files remain for reference only.
 
+## Dashboard
+
+Two top-level sections accessible from the header nav:
+
+### 📊 Strategy
+
+Combined KPIs (total P&L, win rate, open positions), per-strategy summary cards, and tabbed views for each strategy's open/closed positions plus a unified Trade Log.
+
+### 🔬 Research
+
+Backtesting tool for evaluating filter combinations against all historical flow alerts. Powered by `shadow-tracker.js` which prices every alert option, not just traded ones.
+
+**Filters:**
+- Range sliders: Option Price, Premium, Vol/OI, IV, DTE, OTM%, Days to ER, Ask Side %, Min Trade Count
+- Dropdowns: Type (All/Calls/Puts), Rule (All/RepeatedHits/Ascending Fill), Sector, Date Range
+- Checkboxes: Opening Only, Require Earnings, Exclude Indexes, Sweeps Only, Single Leg, Active/Expired/Invalid status
+
+**Result columns:** Ticker, Open Date, Type, Strike, Entry, Last/Exit, Expiry, PnL, PnL%, Peak%, Size, Trades, Premium, Vol/OI, IV, IV Pctl, DTE, OTM%, Spread%, DP $, ER, Status
+
+**Optimizer:** Server-side batch job (`POST /api/research/optimize`) that grid-searches ~344K parameter combinations across premium, vol/OI, IV, DTE, OTM%, spread%, sweeps, trade count, and type. Inherits current dropdown/checkbox selections as baseline. Returns top 50 results ranked by total PnL with win rate, avg PnL, and avg peak%. Click any result row to apply those filters.
+
+**Enrichment data:** Scanner stamps IV percentile (`_ivPctl`) and dark pool stats (`_dpRecentNotional`, `_dpPrintCount`, `_dpAvgPrintSize`) from the enrichment cache onto flow JSONL alerts at archive time. Old alerts before this change show "—" for these columns.
+
 ## Dashboard API
 
-Read-only JSON endpoints:
+JSON endpoints:
 
-| Endpoint | Description |
-|---|---|
-| `GET /api/flow` | Flow open/closed positions and stats |
-| `GET /api/riptide` | Riptide open/closed positions and stats |
-| `GET /api/theta` | Theta open/closed positions and stats |
-| `GET /api/yolo` | Yolo open/closed positions, delta stats |
-| `GET /api/summary` | Combined KPIs across all 4 strategies |
+| Endpoint | Method | Description |
+|---|---|---|
+| `GET /api/flow` | GET | Flow open/closed positions and stats |
+| `GET /api/riptide` | GET | Riptide open/closed positions and stats |
+| `GET /api/theta` | GET | Theta open/closed positions and stats |
+| `GET /api/yolo` | GET | Yolo open/closed positions, delta stats |
+| `GET /api/summary` | GET | Combined KPIs across all 4 strategies |
+| `GET /api/research` | GET | All flow alerts with shadow pricing, enrichment data |
+| `POST /api/research/optimize` | POST | Start optimizer batch job (accepts baseline filters as JSON body) |
+| `GET /api/research/optimize` | GET | Poll optimizer status/results (`idle`/`running`/`done`/`error`) |
 

@@ -178,7 +178,7 @@ async function fetchFlowAlerts() {
 }
 
 // ─── Archive to daily JSONL ───
-function archiveAlerts(alerts, seenAlerts) {
+function archiveAlerts(alerts, seenAlerts, enrichmentCache) {
   const todayStr = today();
   const outFile = path.join(DATA_DIR, `flow-${todayStr}.jsonl`);
 
@@ -194,7 +194,17 @@ function archiveAlerts(alerts, seenAlerts) {
   const fd = fs.openSync(outFile, 'a');
   for (const alert of alerts) {
     if (!existingIds.has(alert.id)) {
-      fs.writeSync(fd, JSON.stringify(alert) + '\n');
+      // Stamp enrichment data (DP + IV percentile) onto the alert if available
+      const enriched = { ...alert };
+      const enrich = enrichmentCache ? enrichmentCache[alert.ticker] : null;
+      if (enrich) {
+        enriched._ivPctl = enrich._ivPctl || null;
+        enriched._iv30 = enrich._iv30 || null;
+        enriched._dpRecentNotional = enrich._dpRecentNotional || null;
+        enriched._dpPrintCount = enrich._dpPrintCount || null;
+        enriched._dpAvgPrintSize = enrich._dpAvgPrintSize || null;
+      }
+      fs.writeSync(fd, JSON.stringify(enriched) + '\n');
       existingIds.add(alert.id);
       newCount++;
     }
@@ -1263,8 +1273,8 @@ async function runCycle(cycleNum, seenAlerts, enrichmentCache) {
   const newAlerts = alerts.filter(a => !seenAlerts.has(a.id));
   for (const a of alerts) seenAlerts.add(a.id);
 
-  // 3. Archive to JSONL
-  const archived = archiveAlerts(alerts, seenAlerts);
+  // 3. Archive to JSONL (with enrichment data stamped on)
+  const archived = archiveAlerts(alerts, seenAlerts, enrichmentCache);
 
   console.log(`${LOG_PREFIX()} Cycle #${cycleNum}: ${alerts.length} fetched, ${newAlerts.length} new, ${archived} archived`);
 
