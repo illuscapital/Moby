@@ -806,10 +806,10 @@ const YOLO_PARAMS = {
   requireSingleLeg: true,
   minAskSidePct: 0.70,
   allowedTypes: ['put', 'call'],
-  skipSweeps: false,
+  requireSweep: true,
   minEntryIv: 0,
   maxEntryIv: 0.70,
-  earningsExclusionDays: 14,
+  earningsExclusionDays: 0,
   maxCostPerTrade: 500,
   maxOpenPositions: 50,
   maxEntryDelta: 0.10,
@@ -832,7 +832,7 @@ function yoloFilterAlert(alert) {
 
   if (YOLO_PARAMS.excludeIndexes && INDEX_TICKERS.has(alert.ticker)) return { pass: false };
   if (!YOLO_PARAMS.allowedTypes.includes(alert.type)) return { pass: false };
-  if (YOLO_PARAMS.skipSweeps && alert.has_sweep) return { pass: false };
+  if (YOLO_PARAMS.requireSweep && !alert.has_sweep) return { pass: false };
 
   if (alert.expiry) {
     const d = dte(alert.expiry);
