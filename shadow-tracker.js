@@ -233,18 +233,70 @@ async function runCycle(state, isFirstRun) {
     console.log(`${LOG_PREFIX()} [shadow] Added ${newCount} new alerts to shadow state`);
   }
 
-  // Mark expired positions
-  let expiredCount = 0;
-  for (const pos of Object.values(state.positions)) {
-    if (pos.status === 'active' && pos.expiry < todayStr) {
+  // Final pricing sweep + mark expired
+  const expiring = Object.values(state.positions).filter(p => p.status === 'active' && p.expiry < todayStr);
+  let expiredCount = expiring.length;
+
+  if (expiring.length > 0) {
+    // Group by ticker for batch fetching
+    const expiringByTicker = {};
+    for (const pos of expiring) {
+      if (!expiringByTicker[pos.ticker]) expiringByTicker[pos.ticker] = [];
+      expiringByTicker[pos.ticker].push(pos);
+    }
+
+    let finalPriced = 0;
+    console.log(`${LOG_PREFIX()} [shadow] Final pricing sweep: ${expiring.length} positions across ${Object.keys(expiringByTicker).length} tickers expiring`);
+
+    for (const [ticker, positions] of Object.entries(expiringByTicker)) {
+      try {
+        await sleep(RATE_LIMIT_MS);
+        const resp = await fetchJson(`https://api.unusualwhales.com/api/stock/${ticker}/option-contracts`);
+        const data = resp?.data || [];
+        const lookup = {};
+        for (const c of data) {
+          if (c.option_symbol) lookup[c.option_symbol] = c;
+        }
+
+        for (const pos of positions) {
+          const c = lookup[pos.optionSymbol];
+          if (c) {
+            const last = parseFloat(c.last_price) || 0;
+            const bid = parseFloat(c.nbbo_bid) || 0;
+            const ask = parseFloat(c.nbbo_ask) || 0;
+            const mid = bid > 0 && ask > 0 ? (bid + ask) / 2 : last;
+            if (last > 0 || bid > 0 || ask > 0) {
+              pos.lastPrice = mid > 0 ? mid : (last > 0 ? last : ask);
+              pos.lastBid = bid;
+              pos.lastAsk = ask;
+              pos.lastUpdated = new Date().toISOString();
+              if (pos.peakPrice === null || pos.lastPrice > pos.peakPrice) {
+                pos.peakPrice = pos.lastPrice;
+              }
+              finalPriced++;
+            }
+          }
+        }
+      } catch (e) {
+        if (e.message === 'RATE_LIMITED') {
+          console.log(`${LOG_PREFIX()} [shadow] Final sweep rate limited after ${finalPriced} — continuing with stale prices`);
+          break;
+        }
+      }
+    }
+
+    if (finalPriced > 0) {
+      console.log(`${LOG_PREFIX()} [shadow] Final sweep priced ${finalPriced} / ${expiring.length} positions`);
+    }
+
+    // Now mark all as expired with final PnL
+    for (const pos of expiring) {
       pos.status = 'expired';
-      // Only calculate PnL if we have a real lastPrice
       if (pos.lastPrice !== null && pos.lastPrice !== undefined && pos.entryPrice > 0 && pos.entryPrice * 100 <= SIM_ALLOCATION) {
         const contracts = Math.max(1, Math.floor(SIM_ALLOCATION / (pos.entryPrice * 100)));
         pos.simulatedPnl = (pos.lastPrice - pos.entryPrice) * 100 * contracts;
         pos.simulatedPnlPct = (pos.lastPrice - pos.entryPrice) / pos.entryPrice * 100;
       }
-      expiredCount++;
     }
   }
 
