@@ -796,7 +796,7 @@ const YOLO_PARAMS = {
   maxPremium: 5000000,
   minVolOiRatio: 0,
   maxVolOiRatio: 50,
-  maxDte: 90,
+  maxDte: 120,
   minDte: 15,
   minOtmPct: 0,
   maxOtmPct: 20,
