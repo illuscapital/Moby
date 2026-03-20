@@ -848,11 +848,10 @@ function yoloFilterAlert(alert) {
     if (otmPct < YOLO_PARAMS.minOtmPct || otmPct > YOLO_PARAMS.maxOtmPct) return { pass: false };
   } else return { pass: false };
 
-  // Earnings: only enter if NO earnings date OR earnings >= 14 trading days away
-  if (alert.next_earnings_date && YOLO_PARAMS.earningsExclusionDays > 0) {
-    const erBdays = tradingDaysBetween(new Date(), new Date(alert.next_earnings_date));
-    if (erBdays >= 0 && erBdays < YOLO_PARAMS.earningsExclusionDays) return { pass: false };
-  }
+  // Earnings: require earnings date, must be >= 1 trading day away
+  if (!alert.next_earnings_date) return { pass: false };
+  const erBdays = tradingDaysBetween(new Date(), new Date(alert.next_earnings_date));
+  if (erBdays < 1) return { pass: false };
 
   if (YOLO_PARAMS.requireSingleLeg && alert.has_multileg) return { pass: false };
 
