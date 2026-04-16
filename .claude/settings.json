@@ -16,6 +16,7 @@
     ],
     "allow": [
       "Bash(node --check *)",
+      "Bash(bash .claude/scripts/*)",
       "Bash(git diff *)",
       "Bash(git status *)",
       "Bash(git log *)",

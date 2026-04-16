@@ -21,9 +21,13 @@ const RATE_LIMIT_MS = 300;
 const SEEN_ALERTS_FILE = path.join(DATA_DIR, 'seen-flow-alerts.json');
 const ENRICHMENT_FILE = path.join(DATA_DIR, 'enrichment-cache.json');
 const ENRICHMENT_MAX_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours — IV/DP data doesn't move fast enough for 30min
+const RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 1000; // 5 min backoff after a 429
+const AVEMONEY_STATE_FILE = path.join(DATA_DIR, 'avemoney-state.json');
 
 const LOG_PREFIX = () => `[${new Date().toISOString()}]`;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+let rateLimitedUntil = 0; // timestamp — skip API calls until this passes
 
 const INDEX_TICKERS = new Set(['SPX', 'SPXW', 'SPY', 'QQQ', 'IWM', 'DIA', 'XSP', 'VIX', 'NDX', 'RUT']);
 
@@ -51,14 +55,21 @@ function sendSignal(message) {
 
 // ─── API ───
 async function fetchJson(url) {
+  if (Date.now() < rateLimitedUntil) {
+    throw new Error('RATE_LIMITED');
+  }
   return new Promise((resolve, reject) => {
     https.get(url, {
       headers: { 'Authorization': `Bearer ${API_TOKEN}` }
     }, res => {
       if (res.statusCode === 429) {
+        rateLimitedUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
         let d = '';
         res.on('data', c => d += c);
-        res.on('end', () => reject(new Error('RATE_LIMITED')));
+        res.on('end', () => {
+          console.error(`${LOG_PREFIX()} RATE LIMITED — backing off ${RATE_LIMIT_COOLDOWN_MS / 1000}s`);
+          reject(new Error('RATE_LIMITED'));
+        });
         return;
       }
       let d = '';
@@ -159,6 +170,93 @@ function saveEnrichmentCache(cache) {
   fs.writeFileSync(ENRICHMENT_FILE, JSON.stringify(cache, null, 2));
 }
 
+// ─── AveMoney State (K/S moneyness accumulator) ───
+function loadAveMoneyState() {
+  if (fs.existsSync(AVEMONEY_STATE_FILE)) {
+    try { return JSON.parse(fs.readFileSync(AVEMONEY_STATE_FILE, 'utf8')); }
+    catch (e) { return { date: today(), tickers: {}, processedIds: [] }; }
+  }
+  return { date: today(), tickers: {}, processedIds: [] };
+}
+
+function saveAveMoneyState(state) {
+  // Convert _processedSet back to array for storage, strip runtime-only fields
+  const toSave = { ...state, processedIds: [...(state._processedSet || [])], _processedSet: undefined };
+  fs.writeFileSync(AVEMONEY_STATE_FILE, JSON.stringify(toSave, null, 2));
+}
+
+function updateAveMoney(alert, aveMoneyState) {
+  // Skip if already processed
+  if (aveMoneyState._processedSet.has(alert.id)) return;
+
+  const strike = parseFloat(alert.strike);
+  const underlying = parseFloat(alert.underlying_price);
+  if (!strike || !underlying || strike <= 0 || underlying <= 0) return;
+
+  const bid = parseFloat(alert.bid || 0);
+  const ask = parseFloat(alert.ask || 0);
+  const mid = bid > 0 && ask > 0 ? (bid + ask) / 2 : parseFloat(alert.price || 0);
+  const vol = parseInt(alert.volume || alert.total_size || 0);
+  if (!mid || mid <= 0 || !vol || vol <= 0) return;
+
+  const type = alert.type;
+  if (type !== 'call' && type !== 'put') return;
+
+  const ks = strike / underlying;
+  const dollarVol = mid * vol;
+  const ticker = alert.ticker;
+
+  if (!aveMoneyState.tickers[ticker]) {
+    aveMoneyState.tickers[ticker] = {
+      callSumKS: 0, callSumW: 0,
+      putSumKS: 0, putSumW: 0,
+      callAveMoney: null, putAveMoney: null, allAveMoney: null,
+      alertCount: 0, lastUpdated: new Date().toISOString(),
+    };
+  }
+
+  const t = aveMoneyState.tickers[ticker];
+  if (type === 'call') {
+    t.callSumKS += ks * dollarVol;
+    t.callSumW += dollarVol;
+  } else {
+    t.putSumKS += ks * dollarVol;
+    t.putSumW += dollarVol;
+  }
+  t.alertCount++;
+  t.lastUpdated = new Date().toISOString();
+
+  // Recompute averages
+  t.callAveMoney = t.callSumW > 0 ? t.callSumKS / t.callSumW : null;
+  t.putAveMoney = t.putSumW > 0 ? t.putSumKS / t.putSumW : null;
+  const totalSumKS = t.callSumKS + t.putSumKS;
+  const totalSumW = t.callSumW + t.putSumW;
+  t.allAveMoney = totalSumW > 0 ? totalSumKS / totalSumW : null;
+
+  aveMoneyState._processedSet.add(alert.id);
+}
+
+function getAveMoneyScore(ticker, type, aveMoneyState) {
+  const t = aveMoneyState.tickers[ticker];
+  if (!t || t.alertCount < 3) {
+    return { score: 0, label: 'insufficient', value: null };
+  }
+
+  if (type === 'call') {
+    const v = t.callAveMoney;
+    if (v === null) return { score: 0, label: 'insufficient', value: null };
+    if (v >= 1.05) return { score: 2, label: 'strong-bullish', value: v };
+    if (v >= 1.02) return { score: 1, label: 'bullish', value: v };
+    return { score: 0, label: 'neutral', value: v };
+  } else {
+    const v = t.putAveMoney;
+    if (v === null) return { score: 0, label: 'insufficient', value: null };
+    if (v <= 0.95) return { score: 2, label: 'strong-bearish', value: v };
+    if (v <= 0.98) return { score: 1, label: 'bearish', value: v };
+    return { score: 0, label: 'neutral', value: v };
+  }
+}
+
 // ─── Seen Alerts (deduplication) ───
 function loadSeenAlerts() {
   if (fs.existsSync(SEEN_ALERTS_FILE)) {
@@ -192,7 +290,7 @@ async function fetchFlowAlerts() {
 }
 
 // ─── Archive to daily JSONL ───
-function archiveAlerts(alerts, seenAlerts, enrichmentCache) {
+function archiveAlerts(alerts, seenAlerts, enrichmentCache, aveMoneyState) {
   const todayStr = today();
   const outFile = path.join(DATA_DIR, `flow-${todayStr}.jsonl`);
 
@@ -217,6 +315,16 @@ function archiveAlerts(alerts, seenAlerts, enrichmentCache) {
         enriched._dpRecentNotional = enrich._dpRecentNotional || null;
         enriched._dpPrintCount = enrich._dpPrintCount || null;
         enriched._dpAvgPrintSize = enrich._dpAvgPrintSize || null;
+      }
+      // Stamp AveMoney scores
+      const amTicker = aveMoneyState && aveMoneyState.tickers[alert.ticker];
+      if (amTicker) {
+        enriched._aveMoney = {
+          callAveMoney: amTicker.callAveMoney,
+          putAveMoney: amTicker.putAveMoney,
+          allAveMoney: amTicker.allAveMoney,
+          alertCount: amTicker.alertCount,
+        };
       }
       fs.writeSync(fd, JSON.stringify(enriched) + '\n');
       existingIds.add(alert.id);
@@ -294,6 +402,12 @@ async function enrichTickers() {
   let fetched = 0, skipped = 0;
 
   for (const ticker of toEnrich) {
+    // Bail out of enrichment loop if rate-limited
+    if (Date.now() < rateLimitedUntil) {
+      console.log(`${LOG_PREFIX()} [enrich] Rate-limited — stopping enrichment (${toEnrich.length - fetched - skipped} tickers deferred)`);
+      break;
+    }
+
     if (cache[ticker] && (now - cache[ticker]._fetchedAt) < ENRICHMENT_MAX_AGE_MS) {
       skipped++;
       continue;
@@ -312,6 +426,7 @@ async function enrichTickers() {
       entry._impliedMove = parseFloat(d30.implied_move_perc || 0);
     } catch (e) {
       console.error(`${LOG_PREFIX()} [enrich] IV fetch failed for ${ticker}: ${e.message}`);
+      if (e.message === 'RATE_LIMITED') break;
     }
 
     try {
@@ -332,6 +447,7 @@ async function enrichTickers() {
       entry._dpAvgPrintSize = recent.length > 0 ? Math.round(totalVolume / recent.length) : 0;
     } catch (e) {
       console.error(`${LOG_PREFIX()} [enrich] DP fetch failed for ${ticker}: ${e.message}`);
+      if (e.message === 'RATE_LIMITED') break;
     }
 
     if (entry._iv30 > 0 || entry._dpPrintCount > 0) {
@@ -482,13 +598,16 @@ function flowFilterAlert(alert) {
 function flowFormatEntry(pos) {
   const dir = pos.type.toUpperCase();
   const pnlNote = pos.hasSweep ? ' 🔥 SWEEP' : '';
+  const amNote = pos.aveMoneyLabel && pos.aveMoneyLabel !== 'insufficient' && pos.aveMoneyLabel !== 'neutral'
+    ? `\nAM: ${pos.aveMoneyLabel} (${pos.aveMoneyValue !== null ? pos.aveMoneyValue.toFixed(3) : 'N/A'})`
+    : '';
   return `🐋 MOBY ENTRY: ${pos.ticker} ${pos.strike}${dir.charAt(0)} ${pos.expiry}\n` +
     `${pos.contracts}x @ $${pos.entryPrice.toFixed(2)} = $${pos.entryValue.toFixed(0)}\n` +
     `Vol/OI: ${pos.volOi.toFixed(1)}x | ${pos.otmPct}% OTM | IV: ${(pos.entryIv * 100).toFixed(0)}%\n` +
-    `ER: ${pos.earningsDate} (${pos.erTime})${pnlNote}`;
+    `ER: ${pos.earningsDate} (${pos.erTime})${pnlNote}${amNote}`;
 }
 
-async function processFlowEntry(alert, enrichmentCache) {
+async function processFlowEntry(alert, enrichmentCache, aveMoneyState) {
   const cfg = STRATEGY_FILES.flow;
   const state = loadState(cfg.stateFile, {
     openPositions: [], closedPositions: [], seenAlertIds: [],
@@ -538,7 +657,13 @@ async function processFlowEntry(alert, enrichmentCache) {
   const alertBid = parseFloat(sig.bid) || 0;
   const entryPrice = alertAsk > 0 ? alertAsk : quote.price;
   const pricePerContract = entryPrice * 100;
-  const effectiveSize = dpConfirmed ? FLOW_PARAMS.maxPositionSize * FLOW_PARAMS.dpConfirmSizeMultiplier : FLOW_PARAMS.maxPositionSize;
+  let effectiveSize = dpConfirmed ? FLOW_PARAMS.maxPositionSize * FLOW_PARAMS.dpConfirmSizeMultiplier : FLOW_PARAMS.maxPositionSize;
+
+  // AveMoney boost
+  const amScore = getAveMoneyScore(sig.ticker, sig.type, aveMoneyState);
+  const aveMoneyBoost = amScore.score >= 2 ? 1.5 : amScore.score >= 1 ? 1.25 : 1.0;
+  effectiveSize *= aveMoneyBoost;
+
   const contracts = Math.max(1, Math.floor(effectiveSize / pricePerContract));
   const entryValue = entryPrice * 100 * contracts;
 
@@ -547,6 +672,8 @@ async function processFlowEntry(alert, enrichmentCache) {
     entryPrice, entryBid: alertBid, entryAsk: alertAsk, entryIv: quote.iv, ivFlag: 'OK',
     contracts, entryValue, status: 'open',
     dpConfirmed, dpPrintCount, dpNotional, ivPctl: enrichment._ivPctl || null,
+    aveMoneyScore: amScore.score, aveMoneyLabel: amScore.label,
+    aveMoneyValue: amScore.value,
     entrySource: 'scanner',
   };
 
@@ -561,7 +688,8 @@ async function processFlowEntry(alert, enrichmentCache) {
   sendSignal(flowFormatEntry(position));
 
   const dpTag = dpConfirmed ? ' | DP confirmed' : '';
-  console.log(`${LOG_PREFIX()} [flow] ENTRY: ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry} | ${contracts}x @ $${entryPrice.toFixed(2)} ($${entryValue.toFixed(0)}) | ER: ${sig.earningsDate} (${sig.erTime || '?'}) | ${sig.volOi.toFixed(1)}x vol/OI${dpTag}`);
+  const amTag = amScore.label !== 'insufficient' && amScore.label !== 'neutral' ? ` | AM: ${amScore.label}` : '';
+  console.log(`${LOG_PREFIX()} [flow] ENTRY: ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry} | ${contracts}x @ $${entryPrice.toFixed(2)} ($${entryValue.toFixed(0)}) | ER: ${sig.earningsDate} (${sig.erTime || '?'}) | ${sig.volOi.toFixed(1)}x vol/OI${dpTag}${amTag}`);
   return position;
 }
 
@@ -899,14 +1027,17 @@ function yoloFormatEntry(pos) {
   const deltaStr = pos.priceDelta !== null
     ? `\nΔ from alert: ${pos.priceDelta >= 0 ? '+' : ''}$${pos.priceDelta.toFixed(2)} (${pos.priceDeltaPct >= 0 ? '+' : ''}${pos.priceDeltaPct.toFixed(1)}%) | ${pos.alertDelaySec}s delay`
     : '';
+  const amNote = pos.aveMoneyLabel && pos.aveMoneyLabel !== 'insufficient' && pos.aveMoneyLabel !== 'neutral'
+    ? `\nAM: ${pos.aveMoneyLabel} (${pos.aveMoneyValue !== null ? pos.aveMoneyValue.toFixed(3) : 'N/A'})`
+    : '';
   return `🎲 YOLO ENTRY: ${pos.ticker} ${pos.strike}${typeUpper} ${pos.expiry}\n` +
     `${pos.contracts}x @ $${pos.entryPrice.toFixed(2)} ($${pos.totalCost.toFixed(0)} total)\n` +
     `IV: ${(pos.entryIv * 100).toFixed(0)}% | OTM: ${pos.otmPct}%\n` +
     `Targets: no cap (trail 15% from peak) / -10% ($${(pos.entryPrice * 0.90).toFixed(2)})\n` +
-    `Theta guard: exit by ${pos.thetaExitDate}${deltaStr}`;
+    `Theta guard: exit by ${pos.thetaExitDate}${deltaStr}${amNote}`;
 }
 
-async function processYoloEntry(alert, enrichmentCache) {
+async function processYoloEntry(alert, enrichmentCache, aveMoneyState) {
   const cfg = STRATEGY_FILES.yolo;
   const state = loadState(cfg.stateFile, {
     openPositions: [], closedPositions: [], seenAlertIds: [],
@@ -968,7 +1099,12 @@ async function processYoloEntry(alert, enrichmentCache) {
   const dpPrintCount = enrichment._dpPrintCount || 0;
   const dpNotional = enrichment._dpRecentNotional || 0;
   const dpConfirmed = dpPrintCount >= YOLO_PARAMS.dpConfirmMinPrints && dpNotional >= YOLO_PARAMS.dpConfirmMinNotional;
-  const effectiveSize = dpConfirmed ? YOLO_PARAMS.maxCostPerTrade * YOLO_PARAMS.dpConfirmSizeMultiplier : YOLO_PARAMS.maxCostPerTrade;
+  let effectiveSize = dpConfirmed ? YOLO_PARAMS.maxCostPerTrade * YOLO_PARAMS.dpConfirmSizeMultiplier : YOLO_PARAMS.maxCostPerTrade;
+
+  // AveMoney boost
+  const amScore = getAveMoneyScore(sig.ticker, sig.type, aveMoneyState);
+  const aveMoneyBoost = amScore.score >= 2 ? 1.5 : amScore.score >= 1 ? 1.25 : 1.0;
+  effectiveSize *= aveMoneyBoost;
 
   const contracts = Math.max(1, Math.floor(effectiveSize / costPerContract));
   const totalCost = contracts * costPerContract;
@@ -986,6 +1122,8 @@ async function processYoloEntry(alert, enrichmentCache) {
     dpRecentNotional: enrichment._dpRecentNotional || null,
     dpAvgPrintSize: enrichment._dpAvgPrintSize || null,
     alertAsk, alertBid, alertMid, priceDelta, priceDeltaPct, alertDelaySec,
+    aveMoneyScore: amScore.score, aveMoneyLabel: amScore.label,
+    aveMoneyValue: amScore.value,
     entrySource: 'scanner',
   };
 
@@ -998,7 +1136,8 @@ async function processYoloEntry(alert, enrichmentCache) {
   logTrade(cfg.tradesFile, { action: 'OPEN', ...position });
   sendSignal(yoloFormatEntry(position));
 
-  console.log(`${LOG_PREFIX()} [yolo] ENTRY: ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry} | ${contracts}x @ $${entryPrice.toFixed(2)} ($${totalCost.toFixed(0)}) | IV: ${(quote.iv * 100).toFixed(0)}% | theta exit: ${thetaExitDate}`);
+  const amTag = amScore.label !== 'insufficient' && amScore.label !== 'neutral' ? ` | AM: ${amScore.label}` : '';
+  console.log(`${LOG_PREFIX()} [yolo] ENTRY: ${sig.type.toUpperCase()} ${sig.ticker} ${sig.strike} ${sig.expiry} | ${contracts}x @ $${entryPrice.toFixed(2)} ($${totalCost.toFixed(0)}) | IV: ${(quote.iv * 100).toFixed(0)}% | theta exit: ${thetaExitDate}${amTag}`);
   return position;
 }
 
@@ -1279,7 +1418,7 @@ async function runThetaScan() {
 // MAIN LOOP
 // ════════════════════════════════════════════════════════════════════
 
-async function runCycle(cycleNum, seenAlerts, enrichmentCache) {
+async function runCycle(cycleNum, seenAlerts, enrichmentCache, aveMoneyState) {
   // 1. Fetch flow alerts
   let alerts;
   try {
@@ -1289,12 +1428,24 @@ async function runCycle(cycleNum, seenAlerts, enrichmentCache) {
     return { flowEntries: 0, riptideEntries: 0, yoloEntries: 0, newAlerts: 0 };
   }
 
-  // 2. Identify new alerts
+  // 2. Reset AveMoney state if new day, then accumulate for ALL alerts
+  if (aveMoneyState.date !== today()) {
+    aveMoneyState.date = today();
+    aveMoneyState.tickers = {};
+    aveMoneyState.processedIds = [];
+    aveMoneyState._processedSet = new Set();
+  }
+  for (const a of alerts) {
+    updateAveMoney(a, aveMoneyState);
+  }
+  saveAveMoneyState(aveMoneyState);
+
+  // 3. Identify new alerts
   const newAlerts = alerts.filter(a => !seenAlerts.has(a.id));
   for (const a of alerts) seenAlerts.add(a.id);
 
-  // 3. Archive to JSONL (with enrichment data stamped on)
-  const archived = archiveAlerts(alerts, seenAlerts, enrichmentCache);
+  // 4. Archive to JSONL (with enrichment + aveMoney data stamped on)
+  const archived = archiveAlerts(alerts, seenAlerts, enrichmentCache, aveMoneyState);
 
   console.log(`${LOG_PREFIX()} Cycle #${cycleNum}: ${alerts.length} fetched, ${newAlerts.length} new, ${archived} archived`);
 
@@ -1302,13 +1453,13 @@ async function runCycle(cycleNum, seenAlerts, enrichmentCache) {
     return { flowEntries: 0, riptideEntries: 0, yoloEntries: 0, newAlerts: 0 };
   }
 
-  // 4. Run each new alert through all 3 flow-based strategies
+  // 5. Run each new alert through all 3 flow-based strategies
   let flowEntries = 0, riptideEntries = 0, yoloEntries = 0;
 
   for (const alert of newAlerts) {
     // Flow
     try {
-      const result = await processFlowEntry(alert, enrichmentCache);
+      const result = await processFlowEntry(alert, enrichmentCache, aveMoneyState);
       if (result) flowEntries++;
     } catch (e) {
       console.error(`${LOG_PREFIX()} [flow] Error on ${alert.ticker}: ${e.message}`);
@@ -1324,7 +1475,7 @@ async function runCycle(cycleNum, seenAlerts, enrichmentCache) {
 
     // Yolo
     try {
-      const result = await processYoloEntry(alert, enrichmentCache);
+      const result = await processYoloEntry(alert, enrichmentCache, aveMoneyState);
       if (result) yoloEntries++;
     } catch (e) {
       console.error(`${LOG_PREFIX()} [yolo] Error on ${alert.ticker}: ${e.message}`);
@@ -1339,7 +1490,7 @@ async function main() {
 
   console.log(`${LOG_PREFIX()} Scanner started`);
   console.log(`${LOG_PREFIX()} Poll interval: ${POLL_INTERVAL_MS / 1000}s | Rate limit: ${RATE_LIMIT_MS}ms`);
-  console.log(`${LOG_PREFIX()} Strategies: flow, riptide, yolo (per-cycle) | theta (every 30min)`);
+  console.log(`${LOG_PREFIX()} Strategies: flow, riptide, yolo (per-cycle) | theta +0m, screener +10m, enrichment +20m (30min stagger)`);
   console.log(`${LOG_PREFIX()} Entry filters:`);
   console.log(`${LOG_PREFIX()}   Flow:    prem $${FLOW_PARAMS.minPremium/1000}K-$${FLOW_PARAMS.maxPremium/1000000}M, vol/OI ${FLOW_PARAMS.minVolOiRatio}-${FLOW_PARAMS.maxVolOiRatio}x, opt $${FLOW_PARAMS.minOptionPrice}-$${FLOW_PARAMS.maxOptionPrice}, DTE ${FLOW_PARAMS.minDte}-${FLOW_PARAMS.maxDte}, OTM ${FLOW_PARAMS.minOtmPct}-${FLOW_PARAMS.maxOtmPct}%, IV ${(FLOW_PARAMS.minEntryIv*100).toFixed(0)}-${(FLOW_PARAMS.maxEntryIv*100).toFixed(0)}%, ER within ${FLOW_PARAMS.earningsWindowDays}d, sweeps=${FLOW_PARAMS.requireSweep}, $${FLOW_PARAMS.maxPositionSize}/trade, max ${FLOW_PARAMS.maxOpenPositions}`);
   console.log(`${LOG_PREFIX()}   Riptide: prem $${RIPTIDE_PARAMS.minPremium/1000}K-$${RIPTIDE_PARAMS.maxPremium/1000000}M, vol/OI ${RIPTIDE_PARAMS.minVolOiRatio}-${RIPTIDE_PARAMS.maxVolOiRatio}x, opt $${RIPTIDE_PARAMS.minOptionPrice}-$${RIPTIDE_PARAMS.maxOptionPrice}, DTE ${RIPTIDE_PARAMS.minDte}-${RIPTIDE_PARAMS.maxDte}, OTM ${RIPTIDE_PARAMS.minOtmPct}-${RIPTIDE_PARAMS.maxOtmPct}%, IV ${(RIPTIDE_PARAMS.minEntryIv*100).toFixed(0)}-${(RIPTIDE_PARAMS.maxEntryIv*100).toFixed(0)}%, sweeps=${RIPTIDE_PARAMS.requireSweep}, credit≥$${RIPTIDE_PARAMS.minCreditPerContract}, $${RIPTIDE_PARAMS.accountSize * RIPTIDE_PARAMS.maxRiskPct} max risk, max ${RIPTIDE_PARAMS.maxOpenPositions}`);
@@ -1348,11 +1499,16 @@ async function main() {
 
   seenAlerts = loadSeenAlerts();
   let enrichmentCache = loadEnrichmentCache();
+  let aveMoneyState = loadAveMoneyState();
+  // Convert processedIds array to Set for fast lookup during cycle
+  aveMoneyState._processedSet = new Set(aveMoneyState.processedIds || []);
+  console.log(`${LOG_PREFIX()} AveMoney state: ${Object.keys(aveMoneyState.tickers).length} tickers, ${aveMoneyState._processedSet.size} processed alerts (date: ${aveMoneyState.date})`);
   let cycleNum = 0;
   let lastScreenerRun = 0;
   let lastThetaRun = 0;
   let lastEnrichmentRun = 0;
   const THIRTY_MIN = 30 * 60 * 1000;
+  const TEN_MIN = 10 * 60 * 1000;
 
   while (true) {
     if (!isMarketHours()) {
@@ -1365,8 +1521,16 @@ async function main() {
     const now = Date.now();
 
     try {
+      // Skip entire cycle during rate-limit cooldown
+      if (Date.now() < rateLimitedUntil) {
+        const secsLeft = Math.ceil((rateLimitedUntil - Date.now()) / 1000);
+        console.log(`${LOG_PREFIX()} Cycle #${cycleNum}: rate-limit cooldown (${secsLeft}s left) — skipping`);
+        await sleep(POLL_INTERVAL_MS);
+        continue;
+      }
+
       // Main flow-based cycle (every poll interval)
-      const results = await runCycle(cycleNum, seenAlerts, enrichmentCache);
+      const results = await runCycle(cycleNum, seenAlerts, enrichmentCache, aveMoneyState);
 
       const totalEntries = results.flowEntries + results.riptideEntries + results.yoloEntries;
       if (totalEntries > 0) {
@@ -1378,8 +1542,13 @@ async function main() {
         saveSeenAlerts(seenAlerts);
       }
 
-      // Theta scan (every 30 min)
-      if (now - lastThetaRun >= THIRTY_MIN) {
+      // Heavy work is staggered: theta at +0, screener at +10min, enrichment at +20min
+      // Each runs every 30 min but offset so they never share a cycle.
+      // All heavy work is skipped during rate-limit cooldown.
+      const inCooldown = Date.now() < rateLimitedUntil;
+
+      // Theta scan (every 30 min, offset +0)
+      if (!inCooldown && now - lastThetaRun >= THIRTY_MIN) {
         try {
           await runThetaScan();
         } catch (e) {
@@ -1388,8 +1557,8 @@ async function main() {
         lastThetaRun = now;
       }
 
-      // Screener collection (every 30 min)
-      if (now - lastScreenerRun >= THIRTY_MIN) {
+      // Screener collection (every 30 min, offset +10min from theta)
+      if (!inCooldown && now - lastScreenerRun >= THIRTY_MIN && now - lastThetaRun >= TEN_MIN) {
         try {
           await collectScreener();
         } catch (e) {
@@ -1398,8 +1567,8 @@ async function main() {
         lastScreenerRun = now;
       }
 
-      // Enrichment (every 30 min)
-      if (now - lastEnrichmentRun >= THIRTY_MIN) {
+      // Enrichment (every 30 min, offset +20min from theta)
+      if (!inCooldown && now - lastEnrichmentRun >= THIRTY_MIN && now - lastThetaRun >= 2 * TEN_MIN) {
         try {
           await enrichTickers();
           enrichmentCache = loadEnrichmentCache();

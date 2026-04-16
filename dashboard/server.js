@@ -270,7 +270,7 @@ function filterAlerts(alerts, f) {
     if (f.typeFilter === 'puts' && (a.type || '').toLowerCase() !== 'put') return false;
     if (f.ruleFilter && f.ruleFilter !== 'all' && a.alertRule !== f.ruleFilter) return false;
     if (f.sectorFilter && f.sectorFilter !== 'all' && (a.sector || 'Unknown') !== f.sectorFilter) return false;
-    if (f.openingOnly && !a.allOpeningTrades) return false;
+
     if (f.dateFrom && a.alertDate < f.dateFrom) return false;
     if (f.dateTo && a.alertDate > f.dateTo) return false;
     if (f.requireEarnings && !a.hasEarnings) return false;

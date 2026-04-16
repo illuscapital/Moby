@@ -1,5 +1,5 @@
 
-dashboard/dashboard.log
+*.log
 data/
 # Data & state (runtime, not code)
 .env

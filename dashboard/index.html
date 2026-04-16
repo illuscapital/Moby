@@ -189,6 +189,21 @@ const pnl = v => v >= 0 ? `$${v.toLocaleString('en-US', {minimumFractionDigits: 
 const pnlClass = v => v >= 0 ? 'pos' : 'neg';
 const pct = v => v !== null && v !== undefined ? `${v >= 0 ? '+' : ''}${v.toFixed(1)}%` : '—';
 
+// Build OCC option symbol from position fields → Yahoo Finance URL
+function yahooOptionUrl(p) {
+  if (p.optionSymbol) return `https://finance.yahoo.com/quote/${p.optionSymbol}/`;
+  if (p.ticker && p.expiry && p.strike && p.type) {
+    const exp = p.expiry.replace(/-/g, '').slice(2); // YYMMDD
+    const cp = p.type.charAt(0).toUpperCase();       // C or P
+    const stk = String(Math.round(p.strike * 1000)).padStart(8, '0');
+    return `https://finance.yahoo.com/quote/${p.ticker}${exp}${cp}${stk}/`;
+  }
+  return `https://finance.yahoo.com/quote/${p.ticker}/`;
+}
+function tickerLink(p) {
+  return `<a href="${yahooOptionUrl(p)}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-weight:600;">${p.ticker}</a>`;
+}
+
 // Top-level nav (Strategy / Research)
 document.querySelectorAll('.top-nav-item').forEach(item => {
   item.addEventListener('click', () => {
@@ -240,14 +255,15 @@ function renderFlowTable(state) {
   let html = '';
   if (state.openPositions?.length) {
     html += `<div class="section-title">Open Positions (${state.openPositions.length})</div><div class="table-wrap"><table>
-      <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Expiry</th><th>Entry</th><th>Last</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>DP</th><th>ER Date</th><th>Held</th></tr>`;
+      <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Expiry</th><th>Open Date</th><th>Entry</th><th>Last</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>DP</th><th>ER Date</th><th>Held</th></tr>`;
     for (const p of state.openPositions) {
       const held = Math.round((Date.now() - new Date(p.entryDate).getTime()) / 86400000);
       const upnl = p.unrealizedPnl || 0;
       const upct = p.entryValue > 0 ? (upnl / p.entryValue * 100) : 0;
       const dpBadge = p.dpConfirmed ? '<span style="color:var(--cyan)" title="Dark pool confirmed">🏦</span>' : '—';
       html += `<tr>
-        <td><strong>${p.ticker}</strong></td><td>${(p.type||'').toUpperCase()}</td><td>$${p.strike}</td><td>${p.expiry}</td>
+        <td>${tickerLink(p)}</td><td>${(p.type||'').toUpperCase()}</td><td>$${p.strike}</td><td>${p.expiry}</td>
+        <td>${fmtTs(p.entryTime || p.entryDate)}</td>
         <td>$${p.entryPrice?.toFixed(2)}</td><td>$${(p.lastPrice||0).toFixed(2)}</td><td>${p.contracts}</td>
         <td class="${pnlClass(upnl)}">${pnl(upnl)}</td><td class="${pnlClass(upnl)}">${pct(upct)}</td>
         <td>${p.entryIv ? (p.entryIv*100).toFixed(0)+'%' : '—'}</td><td>${dpBadge}</td><td>${p.earningsDate||'—'}</td><td>${held}d</td>
@@ -260,10 +276,11 @@ function renderFlowTable(state) {
 
   if (state.closedPositions?.length) {
     html += `<div class="section-title">Closed Positions (${state.closedPositions.length})</div><div class="table-wrap"><table>
-      <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Entry</th><th>Exit</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>ER Date</th><th>Hold</th><th>Reason</th></tr>`;
+      <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Open Date</th><th>Entry</th><th>Exit</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>ER Date</th><th>Hold</th><th>Reason</th></tr>`;
     for (const p of [...state.closedPositions].reverse()) {
       html += `<tr>
-        <td><strong>${p.ticker}</strong></td><td>${(p.type||'').toUpperCase()}</td><td>$${p.strike}</td>
+        <td>${tickerLink(p)}</td><td>${(p.type||'').toUpperCase()}</td><td>$${p.strike}</td>
+        <td>${fmtTs(p.entryTime || p.entryDate)}</td>
         <td>$${p.entryPrice?.toFixed(2)}</td><td>$${p.exitPrice?.toFixed(2)}</td><td>${p.contracts}</td>
         <td class="${pnlClass(p.pnl)}">${pnl(p.pnl)}</td><td class="${pnlClass(p.pnlPct)}">${pct(p.pnlPct)}</td>
         <td>${p.entryIv ? (p.entryIv*100).toFixed(0)+'%' : '—'}</td><td>${p.earningsDate||'—'}</td><td>${p.holdDays}d</td>
@@ -284,7 +301,7 @@ function renderRiptideTable(state) {
   let html = '';
   if (state.openPositions?.length) {
     html += `<div class="section-title">Open Positions (${state.openPositions.length})</div><div class="table-wrap"><table>
-      <tr><th>Ticker</th><th>Type</th><th>Spread</th><th>Expiry</th><th>Credit</th><th>Cost</th><th>Ctrs</th><th>PnL</th><th>Max Risk</th><th>IV</th><th>IV Pctl</th><th>DP $</th><th>Held</th></tr>`;
+      <tr><th>Ticker</th><th>Type</th><th>Spread</th><th>Expiry</th><th>Open Date</th><th>Credit</th><th>Cost</th><th>Ctrs</th><th>PnL</th><th>Max Risk</th><th>IV</th><th>IV Pctl</th><th>DP $</th><th>Held</th></tr>`;
     for (const p of state.openPositions) {
       const held = Math.round((Date.now() - new Date(p.entryDate).getTime()) / 86400000);
       const upnl = p.unrealizedPnl || 0;
@@ -292,7 +309,8 @@ function renderRiptideTable(state) {
       const ivPctl = p.ivPctl ? `${(p.ivPctl*100).toFixed(0)}%` : '—';
       const dp = p.dpRecentNotional ? `$${(p.dpRecentNotional/1e6).toFixed(1)}M` : '—';
       html += `<tr>
-        <td><strong>${p.ticker}</strong></td><td>${typeLabel}</td><td>${riptideSpreadLabel(p)}</td><td>${p.expiry}</td>
+        <td>${tickerLink(p)}</td><td>${typeLabel}</td><td>${riptideSpreadLabel(p)}</td><td>${p.expiry}</td>
+        <td>${fmtTs(p.entryTime || p.entryDate)}</td>
         <td>$${p.creditPerContract?.toFixed(2)}</td>
         <td>$${(p.currentSpreadCost||0).toFixed(2)}</td><td>${p.contracts}</td>
         <td class="${pnlClass(upnl)}">${pnl(upnl)}</td><td>${pnl(p.maxRisk||0)}</td>
@@ -306,12 +324,13 @@ function renderRiptideTable(state) {
 
   if (state.closedPositions?.length) {
     html += `<div class="section-title">Closed Positions (${state.closedPositions.length})</div><div class="table-wrap"><table>
-      <tr><th>Ticker</th><th>Type</th><th>Spread</th><th>Credit</th><th>Exit Cost</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>IV Pctl</th><th>Hold</th><th>Reason</th></tr>`;
+      <tr><th>Ticker</th><th>Type</th><th>Spread</th><th>Open Date</th><th>Credit</th><th>Exit Cost</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>IV Pctl</th><th>Hold</th><th>Reason</th></tr>`;
     for (const p of [...state.closedPositions].reverse()) {
       const typeLabel = (p.type === 'call') ? '<span style="color:var(--green)">CALL</span>' : '<span style="color:var(--red)">PUT</span>';
       const ivPctl = p.ivPctl ? `${(p.ivPctl*100).toFixed(0)}%` : '—';
       html += `<tr>
-        <td><strong>${p.ticker}</strong></td><td>${typeLabel}</td><td>${riptideSpreadLabel(p)}</td>
+        <td>${tickerLink(p)}</td><td>${typeLabel}</td><td>${riptideSpreadLabel(p)}</td>
+        <td>${fmtTs(p.entryTime || p.entryDate)}</td>
         <td>$${p.creditPerContract?.toFixed(2)}</td><td>$${(p.exitCostPerContract||0).toFixed(2)}</td>
         <td>${p.contracts}</td>
         <td class="${pnlClass(p.pnl)}">${pnl(p.pnl)}</td><td class="${pnlClass(p.pnlPct)}">${pct(p.pnlPct)}</td>
@@ -328,14 +347,15 @@ function renderThetaTable(state) {
   let html = '';
   if (state.openPositions?.length) {
     html += `<div class="section-title">Open Positions (${state.openPositions.length})</div><div class="table-wrap"><table>
-      <tr><th>Ticker</th><th>Structure</th><th>Expiry</th><th>Credit</th><th>Debit MTM</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV Rank</th><th>Risk</th><th>ER Date</th><th>Held</th></tr>`;
+      <tr><th>Ticker</th><th>Structure</th><th>Expiry</th><th>Open Date</th><th>Credit</th><th>Debit MTM</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV Rank</th><th>Risk</th><th>ER Date</th><th>Held</th></tr>`;
     for (const p of state.openPositions) {
       const held = Math.round((Date.now() - new Date(p.entryDate).getTime()) / 86400000);
       const upnl = p.unrealizedPnl || 0;
       const upct = p.unrealizedPnlPct || 0;
       const struct = `${p.shortCall?.strike}C/${p.longCall?.strike}C | ${p.shortPut?.strike}P/${p.longPut?.strike}P`;
       html += `<tr>
-        <td><strong>${p.ticker}</strong></td><td>${struct}</td><td>${p.expiry}</td>
+        <td>${tickerLink(p)}</td><td>${struct}</td><td>${p.expiry}</td>
+        <td>${fmtTs(p.entryTime || p.entryDate)}</td>
         <td>$${p.credit?.toFixed(2)}</td><td>$${(p.exitDebitMtm||0).toFixed(2)}</td><td>${p.contracts}</td>
         <td class="${pnlClass(upnl)}">${pnl(upnl)}</td><td class="${pnlClass(upct)}">${pct(upct)}</td>
         <td>${p.ivRank ? (p.ivRank*100).toFixed(0)+'%' : '—'}</td><td>${pnl(p.totalRisk||0)}</td>
@@ -349,11 +369,12 @@ function renderThetaTable(state) {
 
   if (state.closedPositions?.length) {
     html += `<div class="section-title">Closed Positions (${state.closedPositions.length})</div><div class="table-wrap"><table>
-      <tr><th>Ticker</th><th>Structure</th><th>Credit</th><th>Exit Debit</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV Rank</th><th>Hold</th><th>Reason</th></tr>`;
+      <tr><th>Ticker</th><th>Structure</th><th>Open Date</th><th>Credit</th><th>Exit Debit</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV Rank</th><th>Hold</th><th>Reason</th></tr>`;
     for (const p of [...state.closedPositions].reverse()) {
       const struct = `${p.shortCall?.strike}C/${p.longCall?.strike}C | ${p.shortPut?.strike}P/${p.longPut?.strike}P`;
       html += `<tr>
-        <td><strong>${p.ticker}</strong></td><td>${struct}</td>
+        <td>${tickerLink(p)}</td><td>${struct}</td>
+        <td>${fmtTs(p.entryTime || p.entryDate)}</td>
         <td>$${p.credit?.toFixed(2)}</td><td>$${(p.exitDebit||0).toFixed(2)}</td><td>${p.contracts}</td>
         <td class="${pnlClass(p.pnl)}">${pnl(p.pnl)}</td><td class="${pnlClass(p.pnlPct)}">${pct(p.pnlPct)}</td>
         <td>${p.ivRank ? (p.ivRank*100).toFixed(0)+'%' : '—'}</td><td>${p.holdDays}d</td>
@@ -385,7 +406,7 @@ function renderYoloTable(state) {
 
   if (state.openPositions?.length) {
     html += `<div class="section-title">Open Positions (${state.openPositions.length})</div><div class="table-wrap"><table>
-      <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Expiry</th><th>Entry</th><th>Current</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>Δ Alert</th><th>Held</th><th>θ Exit</th></tr>`;
+      <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Expiry</th><th>Open Date</th><th>Entry</th><th>Current</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>Δ Alert</th><th>Held</th><th>θ Exit</th></tr>`;
     for (const p of state.openPositions) {
       const held = Math.round((Date.now() - new Date(p.entryDate).getTime()) / 86400000);
       const upnl = p.unrealizedPnl || 0;
@@ -395,7 +416,8 @@ function renderYoloTable(state) {
         ? `<span class="${p.priceDelta > 0 ? 'neg' : 'pos'}">$${p.priceDelta.toFixed(2)}</span>`
         : '—';
       html += `<tr>
-        <td><strong>${p.ticker}</strong></td><td>${typeLabel}</td><td>$${p.strike}</td><td>${p.expiry}</td>
+        <td>${tickerLink(p)}</td><td>${typeLabel}</td><td>$${p.strike}</td><td>${p.expiry}</td>
+        <td>${fmtTs(p.entryTime || p.entryDate)}</td>
         <td>$${p.entryPrice?.toFixed(2)}</td><td>$${(p.currentPrice||p.entryPrice).toFixed(2)}</td>
         <td>${p.contracts}</td>
         <td class="${pnlClass(upnl)}">${pnl(upnl)}</td><td class="${pnlClass(upct)}">${pct(upct)}</td>
@@ -410,14 +432,15 @@ function renderYoloTable(state) {
 
   if (state.closedPositions?.length) {
     html += `<div class="section-title">Closed Positions (${state.closedPositions.length})</div><div class="table-wrap"><table>
-      <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Entry</th><th>Exit</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>Δ Alert</th><th>Hold</th><th>Reason</th></tr>`;
+      <tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Open Date</th><th>Entry</th><th>Exit</th><th>Ctrs</th><th>PnL</th><th>PnL%</th><th>IV</th><th>Δ Alert</th><th>Hold</th><th>Reason</th></tr>`;
     for (const p of [...state.closedPositions].reverse()) {
       const typeLabel = p.type === 'call' ? '<span style="color:var(--green)">CALL</span>' : '<span style="color:var(--red)">PUT</span>';
       const deltaStr = p.priceDelta !== null && p.priceDelta !== undefined
         ? `<span class="${p.priceDelta > 0 ? 'neg' : 'pos'}">$${p.priceDelta.toFixed(2)}</span>`
         : '—';
       html += `<tr>
-        <td><strong>${p.ticker}</strong></td><td>${typeLabel}</td><td>$${p.strike}</td>
+        <td>${tickerLink(p)}</td><td>${typeLabel}</td><td>$${p.strike}</td>
+        <td>${fmtTs(p.entryTime || p.entryDate)}</td>
         <td>$${p.entryPrice?.toFixed(2)}</td><td>$${p.exitPrice?.toFixed(2)}</td><td>${p.contracts}</td>
         <td class="${pnlClass(p.pnl)}">${pnl(p.pnl)}</td><td class="${pnlClass(p.pnlPct)}">${pct(p.pnlPct)}</td>
         <td>${p.entryIv ? (p.entryIv*100).toFixed(0)+'%' : '—'}</td><td>${deltaStr}</td>
@@ -444,18 +467,18 @@ function fmtTs(iso) {
 function renderTradeLog(flow, riptide, theta, yolo) {
   const trades = [];
   for (const p of (flow?.closedPositions || [])) {
-    trades.push({ openTime: p.entryTime || p.entryDate, closeTime: p.exitTime || p.exitDate, strat: '🐋 Flow', ticker: p.ticker, action: 'EXIT', detail: `${p.type?.toUpperCase()} $${p.strike}`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').split(' ')[0] });
+    trades.push({ openTime: p.entryTime || p.entryDate, closeTime: p.exitTime || p.exitDate, strat: '🐋 Flow', ticker: p.ticker, type: p.type, strike: p.strike, expiry: p.expiry, optionSymbol: p.optionSymbol, action: 'EXIT', detail: `${p.type?.toUpperCase()} $${p.strike}`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').split(' ')[0] });
   }
   for (const p of (riptide?.closedPositions || [])) {
     const rt = (p.type === 'call') ? 'C' : 'P';
-    trades.push({ openTime: p.entryTime || p.entryDate, closeTime: p.exitTime || p.exitDate, strat: '🌊 Riptide', ticker: p.ticker, action: 'EXIT', detail: `${p.strike}${rt}/${p.protectionStrike}${rt} spread`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').split(' ')[0] });
+    trades.push({ openTime: p.entryTime || p.entryDate, closeTime: p.exitTime || p.exitDate, strat: '🌊 Riptide', ticker: p.ticker, type: p.type, strike: p.strike, expiry: p.expiry, optionSymbol: p.optionSymbol, action: 'EXIT', detail: `${p.strike}${rt}/${p.protectionStrike}${rt} spread`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').split(' ')[0] });
   }
   for (const p of (theta?.closedPositions || [])) {
-    trades.push({ openTime: p.entryTime || p.entryDate, closeTime: p.exitTime || p.exitDate, strat: '⏳ Theta', ticker: p.ticker, action: 'EXIT', detail: `IC ${p.shortCall?.strike}C/${p.shortPut?.strike}P`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').replace(/\(.*\)/, '').trim() });
+    trades.push({ openTime: p.entryTime || p.entryDate, closeTime: p.exitTime || p.exitDate, strat: '⏳ Theta', ticker: p.ticker, type: 'call', strike: p.shortCall?.strike, expiry: p.expiry, optionSymbol: p.optionSymbol, action: 'EXIT', detail: `IC ${p.shortCall?.strike}C/${p.shortPut?.strike}P`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').replace(/\(.*\)/, '').trim() });
   }
   for (const p of (yolo?.closedPositions || [])) {
     const t = p.type === 'call' ? 'C' : 'P';
-    trades.push({ openTime: p.entryTime || p.entryDate, closeTime: p.exitTime || p.exitDate, strat: '🎲 Yolo', ticker: p.ticker, action: 'EXIT', detail: `${p.strike}${t} long`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').split(' ')[0] });
+    trades.push({ openTime: p.entryTime || p.entryDate, closeTime: p.exitTime || p.exitDate, strat: '🎲 Yolo', ticker: p.ticker, type: p.type, strike: p.strike, expiry: p.expiry, optionSymbol: p.optionSymbol, action: 'EXIT', detail: `${p.strike}${t} long`, pnl: p.pnl, pnlPct: p.pnlPct, reason: (p.exitReason||'').split(' ')[0] });
   }
   trades.sort((a, b) => (b.closeTime || '').localeCompare(a.closeTime || ''));
 
@@ -463,7 +486,7 @@ function renderTradeLog(flow, riptide, theta, yolo) {
     <tr><th>Opened</th><th>Closed</th><th>Strategy</th><th>Ticker</th><th>Detail</th><th>PnL</th><th>PnL%</th><th>Reason</th></tr>`;
   for (const t of trades) {
     html += `<tr>
-      <td>${fmtTs(t.openTime)}</td><td>${fmtTs(t.closeTime)}</td><td>${t.strat}</td><td><strong>${t.ticker}</strong></td><td>${t.detail}</td>
+      <td>${fmtTs(t.openTime)}</td><td>${fmtTs(t.closeTime)}</td><td>${t.strat}</td><td>${tickerLink(t)}</td><td>${t.detail}</td>
       <td class="${pnlClass(t.pnl)}">${pnl(t.pnl)}</td><td class="${pnlClass(t.pnlPct)}">${pct(t.pnlPct)}</td>
       <td>${t.reason}</td>
     </tr>`;
@@ -489,7 +512,7 @@ const RESEARCH_DEFAULTS = {
   daysToErMin: 0, daysToErMax: 90,
   tradeCountMin: 0,
   requireEarnings: false, excludeIndexes: true, sweepsOnly: false, singleLegOnly: false, askSideMin: 0, showActive: true, showExpired: true, showInvalid: true,
-  typeFilter: 'all', ruleFilter: 'all', sectorFilter: 'all', openingOnly: false,
+  typeFilter: 'all', ruleFilter: 'all', sectorFilter: 'all', tickerSearch: '',
   dateFrom: '', dateTo: '', expiryFrom: '', expiryTo: '',
 };
 
@@ -538,6 +561,7 @@ function filterResearchAlerts(alerts, f) {
       if (a.daysToEr === null || a.daysToEr === undefined) return false;
       if (a.daysToEr < f.daysToErMin || a.daysToEr > f.daysToErMax) return false;
     }
+    if (f.tickerSearch && !(a.ticker || '').toUpperCase().includes(f.tickerSearch.toUpperCase())) return false;
     if (f.requireEarnings && !a.hasEarnings) return false;
     if (f.excludeIndexes && a.isIndex) return false;
     if (f.sweepsOnly && !a.isSweep) return false;
@@ -548,7 +572,7 @@ function filterResearchAlerts(alerts, f) {
     if (f.typeFilter === 'puts' && (a.type || '').toLowerCase() !== 'put') return false;
     if (f.ruleFilter !== 'all' && a.alertRule !== f.ruleFilter) return false;
     if (f.sectorFilter !== 'all' && (a.sector || 'Unknown') !== f.sectorFilter) return false;
-    if (f.openingOnly && !a.allOpeningTrades) return false;
+
     if (f.dateFrom && a.alertDate < f.dateFrom) return false;
     if (f.dateTo && a.alertDate > f.dateTo) return false;
     if (f.expiryFrom && a.expiry < f.expiryFrom) return false;
@@ -578,6 +602,8 @@ const RESEARCH_COLUMNS = [
   { key: 'simulatedPnl', label: 'PnL', type: 'number', get: a => a.simulatedPnl || 0 },
   { key: 'simulatedPnlPct', label: 'PnL%', type: 'number', get: a => a.simulatedPnlPct || 0 },
   { key: 'peakPnlPct', label: 'Peak%', type: 'number', get: a => a.peakPnlPct || 0 },
+  { key: 'earningsDate', label: 'ER', type: 'string', get: a => a.hasEarnings ? a.earningsDate : '' },
+  { key: 'status', label: 'Status', type: 'string' },
   { key: 'totalSize', label: 'Size', type: 'number', get: a => a.totalSize || 0 },
   { key: 'tradeCount', label: 'Trades', type: 'number', get: a => a.tradeCount || 0 },
   { key: 'premium', label: 'Premium', type: 'number' },
@@ -586,10 +612,7 @@ const RESEARCH_COLUMNS = [
   { key: 'ivPctl', label: 'IV Pctl', type: 'number', get: a => a.ivPctl != null ? a.ivPctl : '' },
   { key: 'dte', label: 'DTE', type: 'number' },
   { key: 'otmPct', label: 'OTM%', type: 'number' },
-  { key: 'bidAskSpread', label: 'Spread%', type: 'number', get: a => a.bidAskSpread || 0 },
-  { key: 'dpRecentNotional', label: 'DP $', type: 'number', get: a => a.dpRecentNotional || 0 },
-  { key: 'earningsDate', label: 'ER', type: 'string', get: a => a.hasEarnings ? a.earningsDate : '' },
-  { key: 'status', label: 'Status', type: 'string' },
+
 ];
 
 function sortResearch(colIdx) {
@@ -656,6 +679,8 @@ function renderResearchPage() {
       <td class="${pnlCls}">${pnlStr}</td>
       <td class="${pnlCls}">${pnlPctStr}</td>
       <td class="${peakCls}">${peakPctStr}</td>
+      <td>${a.hasEarnings ? a.earningsDate : '—'}</td>
+      <td>${statusBadge}</td>
       <td>${a.totalSize || 0}</td>
       <td>${a.tradeCount || 0}</td>
       <td>${premStr}</td>
@@ -664,10 +689,7 @@ function renderResearchPage() {
       <td>${a.ivPctl != null ? (a.ivPctl * 100).toFixed(0) + '%' : '—'}</td>
       <td>${a.dte}</td>
       <td>${a.otmPct.toFixed(1)}%</td>
-      <td>${spreadStr}</td>
-      <td>${a.dpRecentNotional ? '$' + (a.dpRecentNotional / 1e6).toFixed(1) + 'M' : '—'}</td>
-      <td>${a.hasEarnings ? a.earningsDate : '—'}</td>
-      <td>${statusBadge}</td>
+
     </tr>`;
   }
   html += '</table>';
@@ -743,7 +765,6 @@ function renderResearchTab() {
   }
   html += `</div>
     <div class="checkbox-row">
-      <label><input type="checkbox" id="rf-openingOnly" ${f.openingOnly ? 'checked' : ''}> Opening Only</label>
       <label><input type="checkbox" id="rf-requireEarnings" ${f.requireEarnings ? 'checked' : ''}> Require Earnings</label>
       <label><input type="checkbox" id="rf-excludeIndexes" ${f.excludeIndexes ? 'checked' : ''}> Exclude Indexes</label>
       <label><input type="checkbox" id="rf-sweepsOnly" ${f.sweepsOnly ? 'checked' : ''}> Sweeps Only</label>
@@ -751,6 +772,7 @@ function renderResearchTab() {
       <label><input type="checkbox" id="rf-showActive" ${f.showActive ? 'checked' : ''}> Active</label>
       <label><input type="checkbox" id="rf-showExpired" ${f.showExpired ? 'checked' : ''}> Expired</label>
       <label><input type="checkbox" id="rf-showInvalid" ${f.showInvalid ? 'checked' : ''}> Invalid</label>
+      <input type="text" id="rf-tickerSearch" placeholder="Search ticker..." value="${f.tickerSearch || ''}" style="margin-left:auto;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-family:inherit;font-size:12px;width:120px;">
     </div>
     <div class="checkbox-row">
       <label style="display:flex;align-items:center;gap:4px;text-transform:none;font-size:12px;color:var(--fg2);">Type:
@@ -869,7 +891,7 @@ function renderResearchTab() {
     }
   }
 
-  const checks = ['openingOnly', 'requireEarnings', 'excludeIndexes', 'sweepsOnly', 'singleLegOnly', 'showActive', 'showExpired', 'showInvalid'];
+  const checks = ['requireEarnings', 'excludeIndexes', 'sweepsOnly', 'singleLegOnly', 'showActive', 'showExpired', 'showInvalid'];
   for (const key of checks) {
     const el = document.getElementById('rf-' + key);
     if (el) {
@@ -878,6 +900,15 @@ function renderResearchTab() {
         renderResearchTab();
       });
     }
+  }
+
+  // Ticker search
+  const tickerSearchEl = document.getElementById('rf-tickerSearch');
+  if (tickerSearchEl) {
+    tickerSearchEl.addEventListener('input', () => {
+      setResearchFilter('tickerSearch', tickerSearchEl.value);
+      renderResearchTab();
+    });
   }
 
   // Dropdown filters
@@ -986,7 +1017,7 @@ function renderOptimizerResults(state) {
   if (baseline.sectorFilter && baseline.sectorFilter !== 'all') baselineDesc.push('Sector: ' + baseline.sectorFilter);
   if (baseline.dateFrom) baselineDesc.push('From: ' + baseline.dateFrom);
   if (baseline.dateTo) baselineDesc.push('To: ' + baseline.dateTo);
-  if (baseline.openingOnly) baselineDesc.push('Opening Only');
+
   if (baseline.requireEarnings) baselineDesc.push('Req Earnings');
   if (baseline.excludeIndexes) baselineDesc.push('Excl Indexes');
   if (baseline.singleLegOnly) baselineDesc.push('Single Leg');
